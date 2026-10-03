@@ -1,0 +1,27 @@
+version: "3.8"
+
+services:
+  web-pnk:
+    build: .
+    ports:
+      - "81:80"
+    volumes:
+      - ./pnkSecurity:/var/www/html
+    depends_on:
+      - db-prueba
+
+  db-prueba:
+    image: mysql:8.0
+    command: --default-authentication-plugin=mysql_native_password
+    restart: always
+    environment:
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+      MYSQL_DATABASE: pnk_security
+    ports:
+      - "3308:3306"
+    volumes:
+      - ./Script_BD:/docker-entrypoint-initdb.d
+      - db_data:/var/lib/mysql
+
+volumes:
+  db_data:
