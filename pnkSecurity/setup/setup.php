@@ -2,7 +2,7 @@
 
 function conectar()
 {
-    $con=mysqli_connect("localhost","root","","pnk_security");
+    $con=mysqli_connect("db-prueba","root","","pnk_security");
     return $con;
 }
 
