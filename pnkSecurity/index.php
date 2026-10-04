@@ -1,18 +1,33 @@
 <?php
+declare(strict_types=1);
+require_once __DIR__ . '/setup/setup.php';
+iniciar_sesion();
 
-include("setup/setup.php");
-session_start();
+$con = conectar();
+// Validar y sanitizar el parámetro 'id' de la URL 
+$key = filter_input(INPUT_GET, 'id', FILTER_VALIDATE_INT);
+if ($key === null || $key === false) {
+    http_response_code(400);
+    exit('Parámetro de ID inválido.');
+}
+$_SESSION['id'] = $key;
 
-mysqli_set_charset(conectar(), 'utf8');
-$key=$_GET['id'];
-$_SESSION['id']=$_GET['id'];
+//Preparar la consulta usando PDO para evitar inyecciones SQL
+$sql = "SELECT direcciones.calle, direcciones.numero, direcciones.comuna, direcciones.region, 
+               restautantes.nombre, restautantes.id, restautantes.fono, restautantes.email, restautantes.foto 
+        FROM restautantes 
+        INNER JOIN direcciones ON restautantes.direcciones_id = direcciones.id 
+        WHERE restautantes.id = :id AND restautantes.eliminado IS NULL";
+//lo ordené porque me daba TOC la wea en una pura linea JAJAJ
+$stmt = $con->prepare($sql);
+$stmt->bindParam(':id', $key, PDO::PARAM_INT);
+$stmt->execute();
+$datos_restorant = $stmt->fetch(PDO::FETCH_ASSOC);
 
-$sql_restorant="SELECT direcciones.calle, direcciones.numero, direcciones.comuna, direcciones.region, restautantes.nombre, restautantes.id, restautantes.fono, restautantes.email, restautantes.foto FROM restautantes INNER JOIN direcciones ON restautantes.direcciones_id =
-direcciones.id WHERE restautantes.id = ".$key." AND restautantes.eliminado IS NULL";
-$result_restorant=mysqli_query(conectar(),$sql_restorant);
-$datos_restorant=mysqli_fetch_array($result_restorant);
-
-
+if ($datos_restorant === false) {
+    http_response_code(404);
+    die('Restaurante no encontrado.');
+}
 
 ?>
 <!DOCTYPE html>
@@ -146,9 +161,10 @@ $datos_restorant=mysqli_fetch_array($result_restorant);
   <?php
   $sql="SELECT items.id,items.visible,items.tiempo,items.puntuacion,items.destacado, items.precio, items.descripcion,items.observaciones, items.nombre, items.foto, items.orden, cartas.restautantes_id, categorias.visible FROM categorias INNER JOIN items ON items.categorias_id = categorias.id INNER JOIN cartas ON categorias.cartas_id = cartas.id
   WHERE items.destacado = 1 AND items.eliminado IS NULL AND items.visible=1 AND cartas.restautantes_id = ".$key." AND cartas.eliminada IS NULL AND categorias.visible = 1 AND categorias.eliminado IS NULL";
-  $result=mysqli_query(conectar(),$sql);
-  $cont_destacados=mysqli_num_rows($result);
-  if( $cont_destacados!=0)
+  $stmt = $con->prepare($sql);
+  $stmt->execute();
+  $cont_destacados = $stmt->rowCount();
+  if($cont_destacados!=0)
   {
   ?>
   <section class="destacados">
@@ -158,7 +174,7 @@ $datos_restorant=mysqli_fetch_array($result_restorant);
       </div>
       <div class="owl-carousel owl-theme featured-carousel">
       <?php
-      while($destacados=mysqli_fetch_array($result))
+      while($destacados=$stmt->fetch(PDO::FETCH_ASSOC))
       {
       ?>
         <div class="featured-item">
@@ -226,13 +242,14 @@ $datos_restorant=mysqli_fetch_array($result_restorant);
                     <div class="nav nav-tabs nav-fill" id="nav-tab" role="tablist">
                         <?php
                             $sqlcartas="SELECT cartas.id,cartas.restautantes_id,cartas.nombre,cartas.orden,cartas.visible FROM cartas WHERE cartas.restautantes_id = ".$key." and visible=1 AND eliminada IS NULL order by orden asc";
-                            $resultcartas=mysqli_query(conectar(),$sqlcartas);
+                            $resultcartas=$con->prepare($sqlcartas);
+                            $resultcartas->execute();
                             $arraycartas=[];
-                            while($cartas=mysqli_fetch_array($resultcartas))
+                            while($cartas=$resultcartas->fetch())
                             {
-                              array_push($arraycartas,['nombre'=>utf8_encode(quitarespacios($cartas['nombre'])),'id'=>$cartas['id']]);
+                              array_push($arraycartas,['nombre'=>quitarespacios($cartas['nombre']),'id'=>$cartas['id']]);
                             ?>
-                              <a class="nav-item nav-link" id="nav-<?php echo quitarespacios(utf8_encode($cartas['nombre']));?>-tab" data-toggle="tab" href="#<?php echo quitarespacios(utf8_encode($cartas['nombre']));?>" role="tab" aria-controls="nav-profile" aria-selected="false"><?php echo utf8_encode($cartas['nombre']);?></a>
+                              <a class="nav-item nav-link" id="nav-<?php echo quitarespacios($cartas['nombre']);?>-tab" data-toggle="tab" href="#<?php echo quitarespacios($cartas['nombre']);?>" role="tab" aria-controls="nav-profile" aria-selected="false"><?php echo quitarespacios($cartas['nombre']);?></a>
                             <?php
                             }
                         ?>
@@ -240,14 +257,15 @@ $datos_restorant=mysqli_fetch_array($result_restorant);
                   </nav>
                   <div class="tab-content py-3 px-3 px-sm-0" id="nav-tabContent">
                     <?php
-                     for($i=0;$i<=sizeof($arraycartas);$i++)
+                     foreach($arraycartas as $carta => $value)
                      {                             
                     ?>
-                    <div class="tab-pane fade <?php if($i==0){?>show active<?php } ?>" id="<?php echo quitarespacios($arraycartas[$i]["nombre"]);?>" role="tabpanel" aria-labelledby="nav-<?php echo quitarespacios($arraycartas[$i]["nombre"]);?>-tab">              
+                    <div class="tab-pane fade <?php if($carta==0){?>show active<?php } ?>" id="<?php echo quitarespacios($arraycartas[$carta]["nombre"]);?>" role="tabpanel" aria-labelledby="nav-<?php echo quitarespacios($arraycartas[$carta]["nombre"]);?>-tab">  
                       <?php
-                          $sql_categorias="select id,nombre from categorias where visible=1 and cartas_id='".$arraycartas[$i]["id"]."' AND eliminado IS NULL order by orden asc";
-                          $result_categorias=mysqli_query(conectar(),$sql_categorias);
-                          $cont_categorias=mysqli_num_rows($result_categorias);
+                          $sql_categorias="select id,nombre from categorias where visible=1 and cartas_id='".$arraycartas[$carta]["id"]."' AND eliminado IS NULL order by orden asc";
+                          $result_categorias=$con->prepare($sql_categorias);
+                          $result_categorias->execute();
+                          $cont_categorias=$result_categorias->rowCount();
                           if($cont_categorias==0)
                           {?>
                               <div class="row">
@@ -259,7 +277,7 @@ $datos_restorant=mysqli_fetch_array($result_restorant);
                               </div>
                           <?php
                           }else{
-                              while($datos_categorias=mysqli_fetch_array($result_categorias))
+                              while($datos_categorias=$result_categorias->fetch())
                               {
                               ?>
                                 <div class="section-intro mb-20px">
@@ -269,11 +287,12 @@ $datos_restorant=mysqli_fetch_array($result_restorant);
                                 <div class="row">
                                   <?php
                                       $sql_items="SELECT items.visible,items.id, items.nombre, items.descripcion,items.observaciones,items.tiempo,items.puntuacion, items.precio, items.visible, items.foto, items.orden, items.categorias_id FROM items WHERE items.categorias_id = ".$datos_categorias['id']." AND items.visible=1 AND eliminado IS NULL order by orden asc";
-                                      $result_items=mysqli_query(conectar(),$sql_items);
-                                      $count_items=mysqli_num_rows($result_items);
+                                      $result_items=$con->prepare($sql_items);
+                                      $result_items->execute();
+                                      $count_items=$result_items->rowCount();
                                       if($count_items!=0)
                                       {
-                                            while($datos_items=mysqli_fetch_array($result_items))
+                                            while($datos_items=$result_items->fetch())
                                             {
                                             ?>
                                             <div class="<?php if($count_items>1){ ?>col-lg-6 <?php }else{ ?>col-lg-12<?php } ?>">
@@ -292,11 +311,11 @@ $datos_restorant=mysqli_fetch_array($result_restorant);
                                                 ?>
                                                 <div class="media-body">
                                                   <div class="d-flex justify-content-between food-card-title">
-                                                    <h4><?php echo utf8_encode($datos_items['nombre']);?></h4>
+                                                    <h4><?php echo quitarespacios($datos_items['nombre']);?></h4>
                                                     <h3 class="price-tag"><?php echo moneda_chilena($datos_items['precio']);?></h3>
                                                   </div>
-                                                  <p><?php echo utf8_encode($datos_items['descripcion']);?></br>
-                                                  <?php echo utf8_encode($datos_items['observaciones']);?></p>
+                                                  <p><?php echo quitarespacios($datos_items['descripcion']);?></br>
+                                                  <?php echo quitarespacios($datos_items['observaciones']);?></p>
                                                   <?php
                                                   if($datos_items['tiempo']!="")
                                                   {
@@ -403,17 +422,17 @@ if(isset($key))
           </div>
           <br>
           <?php
-
-            $sqlcomentarios="select * from comentarios where id_restaurante=".$key;
-            $resultcomentarios=mysqli_query(conectar(),$sqlcomentarios);
-            while($datoscomentarios=mysqli_fetch_array($resultcomentarios))
+            $sqlcomentarios="SELECT * FROM comentarios WHERE id_restaurante=".$key;
+            $resultcomentarios=$con->prepare($sqlcomentarios);
+            $resultcomentarios->execute();
+            while($datoscomentarios=$resultcomentarios->fetch())
             {
           ?>
           <div class="card bg-light">
             <div class="card-body">
-              <b><?php echo $datoscomentarios['usuario'];?></b>
+              <b><?php echo quitarEspacios($datoscomentarios['usuario']);?></b>
               <br>
-              <?php echo $datoscomentarios['comentario'];?>
+              <?php echo quitarEspacios($datoscomentarios['comentario']);?>
             </div>
           </div>
           <br>

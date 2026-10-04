@@ -1,9 +1,19 @@
 <?php
 
-function conectar()
+function conectar(): PDO
 {
-    $con=mysqli_connect("db-prueba","root","","pnk_security");
-    return $con;
+    $host = "db-prueba";
+    $db = "pnk_security";
+    $user = "root";
+    $pass = "";
+    $dsn = "mysql:host=$host;dbname=$db;charset=utf8mb4";
+    
+    try {
+        $con = new PDO($dsn, $user, $pass);
+        return $con;
+    } catch (PDOException $e) {
+        throw new RuntimeException("Error de conexión a la base de datos" . $e->getMessage());
+    }
 }
 
 function quitarespacios($titulo)
@@ -28,5 +38,13 @@ function moneda_chilena($numero){
     $formateado = "$ ".strrev($tmp);
     return $formateado;
     }
+
+
+function iniciar_sesion(): void
+{
+    if (session_status() !== PHP_SESSION_ACTIVE) {
+        session_start();
+    }
+}
 
 ?>
