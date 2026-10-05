@@ -3,31 +3,33 @@ declare(strict_types=1);
 require_once __DIR__ . '/setup/setup.php';
 iniciar_sesion();
 
+
 $con = conectar();
-// Validar y sanitizar el parámetro 'id' de la URL 
+// 1. Validar que venga el ID en la URL y que sea un número
 $key = filter_input(INPUT_GET, 'id', FILTER_VALIDATE_INT);
-if ($key === null || $key === false) {
+if ($key === false || $key === null) {
     http_response_code(400);
-    exit('Parámetro de ID inválido.');
+    exit('Parámetro id inválido, se aweonio');
 }
 $_SESSION['id'] = $key;
 
-//Preparar la consulta usando PDO para evitar inyecciones SQL
+// 2. Consulta Preparada con PDO (Evita el Syntax Error y el SQL Injection)
 $sql = "SELECT direcciones.calle, direcciones.numero, direcciones.comuna, direcciones.region, 
                restautantes.nombre, restautantes.id, restautantes.fono, restautantes.email, restautantes.foto 
         FROM restautantes 
         INNER JOIN direcciones ON restautantes.direcciones_id = direcciones.id 
         WHERE restautantes.id = :id AND restautantes.eliminado IS NULL";
-//lo ordené porque me daba TOC la wea en una pura linea JAJAJ
+
 $stmt = $con->prepare($sql);
-$stmt->bindParam(':id', $key, PDO::PARAM_INT);
-$stmt->execute();
+$stmt->execute(['id' => $key]);
+
 $datos_restorant = $stmt->fetch(PDO::FETCH_ASSOC);
 
-if ($datos_restorant === false) {
-    http_response_code(404);
-    die('Restaurante no encontrado.');
+if (!$datos_restorant) {
+    die("El restaurante no fue encontrado.");
 }
+
+
 
 ?>
 <!DOCTYPE html>
@@ -36,8 +38,9 @@ if ($datos_restorant === false) {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="X-UA-Compatible" content="ie=edge">
-  <title><?php echo utf8_encode($datos_restorant['nombre']);?></title>
+  <title><?php echo quitarespacios($datos_restorant['nombre']);?></title>
 	<!--<link rel="icon" href="img/Fevicon.png" type="image/png">-->
+  <meta name="csrf-token" content="<?php echo $_SESSION['csrf_token']; ?>">
 
   <link rel="stylesheet" href="vendors/bootstrap/bootstrap.min.css">
   <link rel="stylesheet" href="vendors/themify-icons/themify-icons.css">
@@ -66,7 +69,10 @@ if ($datos_restorant === false) {
       </form>
     <?php
     }else{
-      echo "Bienvenido :".$_SESSION['nombre']." - <a href=setup/cerrar_sesion.php>Cerra Sesión</a>";
+      echo "Bienvenido :".$_SESSION['nombre']." - <a href=\"#\" onclick=\"event.preventDefault(); document.getElementById('logout-form').submit();\">Cerra Sesión</a>";
+      echo "<form id=\"logout-form\" action=\"setup/cerrar_sesion.php\" method=\"post\" style=\"display: none;\">";
+      echo "<input type=\"hidden\" name=\"csrf_token\" value=\"".$_SESSION['csrf_token']."\">";
+      echo "</form>";
     }
   ?>
 </nav>
@@ -101,7 +107,7 @@ if ($datos_restorant === false) {
         <div class="col-lg-4">
           <div class="carro">
             <div class="media float-right">
-              <a class="button_carrito" href="mostrar_carrito.php?keyid=<?php echo $_GET['id'];?>">
+              <a class="button_carrito" href="<?php echo  construir_url('mostrar_carrito.php', ['keyid' => $key]); ?>">
               <svg width="2em" height="2em" viewBox="0 0 16 16" class="bi bi-cart4" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
                 <path fill-rule="evenodd" d="M0 2.5A.5.5 0 0 1 .5 2H2a.5.5 0 0 1 .485.379L2.89 4H14.5a.5.5 0 0 1 .485.621l-1.5 6A.5.5 0 0 1 13 11H4a.5.5 0 0 1-.485-.379L1.61 3H.5a.5.5 0 0 1-.5-.5zM3.14 5l.5 2H5V5H3.14zM6 5v2h2V5H6zm3 0v2h2V5H9zm3 0v2h1.36l.5-2H12zm1.11 3H12v2h.61l.5-2zM11 8H9v2h2V8zM8 8H6v2h2V8zM5 8H3.89l.5 2H5V8zm0 5a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm-2 1a2 2 0 1 1 4 0 2 2 0 0 1-4 0zm9-1a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm-2 1a2 2 0 1 1 4 0 2 2 0 0 1-4 0z"/>
               </svg>
@@ -119,13 +125,13 @@ if ($datos_restorant === false) {
                {
                  ?>
                
-              <h4><?php echo utf8_encode($datos_restorant['nombre']);?></h4>
+              <h4><?php echo quitarespacios($datos_restorant['nombre']);?></h4>
               <h5>
                 <svg width="1em" height="1em" viewBox="0 0 16 16" class="bi bi-geo-alt" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
                   <path fill-rule="evenodd" d="M12.166 8.94C12.696 7.867 13 6.862 13 6A5 5 0 0 0 3 6c0 .862.305 1.867.834 2.94.524 1.062 1.234 2.12 1.96 3.07A31.481 31.481 0 0 0 8 14.58l.208-.22a31.493 31.493 0 0 0 1.998-2.35c.726-.95 1.436-2.008 1.96-3.07zM8 16s6-5.686 6-10A6 6 0 0 0 2 6c0 4.314 6 10 6 10z"/>
                   <path fill-rule="evenodd" d="M8 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm0 1a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/>
                 </svg>  
-              <?php echo utf8_encode($datos_restorant['calle'])." #".$datos_restorant['numero'].", ".utf8_encode($datos_restorant['comuna']);?>
+              <?php echo quitarespacios($datos_restorant['calle'])." #".$datos_restorant['numero'].", ".quitarespacios($datos_restorant['comuna']);?>
               </h5>
               <?php
                }
@@ -163,8 +169,8 @@ if ($datos_restorant === false) {
   WHERE items.destacado = 1 AND items.eliminado IS NULL AND items.visible=1 AND cartas.restautantes_id = ".$key." AND cartas.eliminada IS NULL AND categorias.visible = 1 AND categorias.eliminado IS NULL";
   $stmt = $con->prepare($sql);
   $stmt->execute();
-  $cont_destacados = $stmt->rowCount();
-  if($cont_destacados!=0)
+  $cont_destacados=$stmt->rowCount();
+  if( $cont_destacados!=0)
   {
   ?>
   <section class="destacados">
@@ -174,7 +180,7 @@ if ($datos_restorant === false) {
       </div>
       <div class="owl-carousel owl-theme featured-carousel">
       <?php
-      while($destacados=$stmt->fetch(PDO::FETCH_ASSOC))
+      while($destacados=$stmt->fetch())
       {
       ?>
         <div class="featured-item">
@@ -191,14 +197,13 @@ if ($datos_restorant === false) {
               }
               ?>
           <div class="item-body">
-              <h3><?php echo utf8_encode($destacados['nombre']);?></h3>
-            <p><?php echo utf8_encode($destacados['descripcion']);?><br>
-            <?php echo utf8_encode($destacados['observaciones']);?><br>
+              <h3><?php echo quitarespacios($destacados['nombre']);?></h3>
+            <p><?php echo quitarespacios($destacados['descripcion']);?><br>
+            <?php echo quitarespacios($destacados['observaciones']);?><br>
             <?php
             if($destacados['tiempo']!="")
             {
               ?>
-
             <svg width="1em" height="1em" viewBox="0 0 16 16" class="bi bi-alarm" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
                   <path fill-rule="evenodd" d="M6.5 0a.5.5 0 0 0 0 1H7v1.07a7.001 7.001 0 0 0-3.273 12.474l-.602.602a.5.5 0 0 0 .707.708l.746-.746A6.97 6.97 0 0 0 8 16a6.97 6.97 0 0 0 3.422-.892l.746.746a.5.5 0 0 0 .707-.708l-.601-.602A7.001 7.001 0 0 0 9 2.07V1h.5a.5.5 0 0 0 0-1h-3zm1.038 3.018a6.093 6.093 0 0 1 .924 0 6 6 0 1 1-.924 0zM8.5 5.5a.5.5 0 0 0-1 0v3.362l-1.429 2.38a.5.5 0 1 0 .858.515l1.5-2.5A.5.5 0 0 0 8.5 9V5.5zM0 3.5c0 .753.333 1.429.86 1.887A8.035 8.035 0 0 1 4.387 1.86 2.5 2.5 0 0 0 0 3.5zM13.5 1c-.753 0-1.429.333-1.887.86a8.035 8.035 0 0 1 3.527 3.527A2.5 2.5 0 0 0 13.5 1z"/>
                 </svg>
@@ -257,10 +262,10 @@ if ($datos_restorant === false) {
                   </nav>
                   <div class="tab-content py-3 px-3 px-sm-0" id="nav-tabContent">
                     <?php
-                     foreach($arraycartas as $carta => $value)
-                     {                             
+                     foreach ($arraycartas as $carta => $value)
+                      {                             
                     ?>
-                    <div class="tab-pane fade <?php if($carta==0){?>show active<?php } ?>" id="<?php echo quitarespacios($arraycartas[$carta]["nombre"]);?>" role="tabpanel" aria-labelledby="nav-<?php echo quitarespacios($arraycartas[$carta]["nombre"]);?>-tab">  
+                    <div class="tab-pane fade <?php if($carta==0){?>show active<?php } ?>" id="<?php echo quitarespacios($arraycartas[$carta]["nombre"]);?>" role="tabpanel" aria-labelledby="nav-<?php echo quitarespacios($arraycartas[$carta]["nombre"]);?>-tab">              
                       <?php
                           $sql_categorias="select id,nombre from categorias where visible=1 and cartas_id='".$arraycartas[$carta]["id"]."' AND eliminado IS NULL order by orden asc";
                           $result_categorias=$con->prepare($sql_categorias);
@@ -281,7 +286,7 @@ if ($datos_restorant === false) {
                               {
                               ?>
                                 <div class="section-intro mb-20px">
-                                    <h4 class="intro-title"><?php echo utf8_encode($datos_categorias['nombre']);?></h4>
+                                    <h4 class="intro-title"><?php echo quitarespacios($datos_categorias['nombre']);?></h4>
                                 </div>
 
                                 <div class="row">
@@ -406,9 +411,10 @@ if(isset($key))
             {
              ?>
              <form action="grcomentarios.php" method="post">
+              <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
               <div class="form-group">
                 <label for="usr">Nombre:</label>
-                <input type="text" class="form-control" id="usuario" name="usuario" value="<?php echo $_SESSION['nombre'];?>">
+                <input type="text" class="form-control" id="usuario" name="usuario" value="<?php echo $_SESSION['nombre'];?>" disabled>
               </div>
               <div class="form-group">
                 <label for="comment">Comentario:</label>
@@ -422,6 +428,7 @@ if(isset($key))
           </div>
           <br>
           <?php
+
             $sqlcomentarios="SELECT * FROM comentarios WHERE id_restaurante=".$key;
             $resultcomentarios=$con->prepare($sqlcomentarios);
             $resultcomentarios->execute();
