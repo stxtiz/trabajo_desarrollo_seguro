@@ -14,6 +14,7 @@ if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST
     exit("CSRF token validation failed");
 }
 
+$idRestaurante = $_SESSION['id'] ?? 1;
 $_SESSION = [];
 if (ini_get('session.use_cookies')) {
     $p = session_get_cookie_params();
@@ -22,6 +23,6 @@ if (ini_get('session.use_cookies')) {
 }
 session_destroy();
 
-header("Location: ../index.php");
+header("Location: ../index.php?id=" . $idRestaurante);
 exit;
 ?>

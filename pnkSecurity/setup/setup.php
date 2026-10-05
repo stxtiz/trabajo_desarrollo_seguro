@@ -52,11 +52,20 @@ function moneda_chilena(int|float|string|null $numero): string
 function iniciar_sesion(): void
 {
     if (session_status() !== PHP_SESSION_ACTIVE) {
+        session_set_cookie_params([
+            'httponly' => true,
+            'samesite' => 'Lax' // o 'Strict'
+        ]);
         session_start();
     }
+    // Mitigación de Clickjacking
+    header('X-Frame-Options: DENY');
+    header("Content-Security-Policy: frame-ancestors 'none'");
+    
     if (empty($_SESSION['csrf_token'])) {
         $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
     }
 }
+
 
 ?>
