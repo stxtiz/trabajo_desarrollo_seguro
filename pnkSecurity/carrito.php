@@ -21,24 +21,58 @@ switch($_POST['op'])
 function insertar()
 {
     if (!isset($_SESSION['carrito']) || !is_array($_SESSION['carrito'])) {
-    $_SESSION['carrito'] = [];
+        $_SESSION['carrito'] = [];
     }
 
+    // 1. Validar `iditems` como entero positivo
     $idItem = filter_input(INPUT_POST, 'iditems', FILTER_VALIDATE_INT);
-    if ($idItem === false || $idItem === null) {
+    if ($idItem === false || $idItem <= 0) {
         http_response_code(400);
-        return;
+        exit("ID de ítem inválido.");
+    }
+
+    // Validar que exista el ID del restaurante activo en la sesión (que se asigna en index.php)
+    $idRestaurante = filter_var($_SESSION['id'] ?? 0, FILTER_VALIDATE_INT);
+    if ($idRestaurante <= 0) {
+        http_response_code(400);
+        exit("No hay un restaurante activo.");
     }
     
-    $stmt = conectar()-> prepare(
-        'SELECT id, nombre, precio FROM items
-        WHERE id = :id AND visible = 1 AND eliminado IS NULL'
-    );
-    $stmt->execute([':id' => $idItem]);
+    // 2, 3 y 4. Consultar items, categorias y cartas en una misma sentencia, 
+    // exigiendo visibilidad (visible = 1, eliminado IS NULL) y pertenencia al restaurante activo.
+    $sql = 'SELECT items.id, items.nombre, items.precio 
+            FROM items
+            INNER JOIN categorias ON items.categorias_id = categorias.id
+            INNER JOIN cartas ON categorias.cartas_id = cartas.id
+            WHERE items.id = :id 
+              AND items.visible = 1 AND items.eliminado IS NULL
+              AND categorias.visible = 1 AND categorias.eliminado IS NULL
+              AND cartas.visible = 1 AND cartas.eliminada IS NULL
+              AND cartas.restautantes_id = :id_restaurante';
+
+    $stmt = conectar()->prepare($sql);
+    $stmt->execute([
+        ':id' => $idItem,
+        ':id_restaurante' => $idRestaurante
+    ]);
+    
     $datos = $stmt->fetch(PDO::FETCH_ASSOC);
 
-    $pos=count($_SESSION["carrito"])+1;
-    $productos = array("posicion"=>$pos,"id" => $datos['id'], "nombre" =>$datos['nombre'],"precio"=>$datos['precio']);
+    // 5. Comprobar que la consulta devolvió un producto válido antes de intentar usar sus columnas.
+    if (!$datos) {
+        http_response_code(404);
+        // Rechazar artículos ocultos, eliminados o de otro restaurante 
+        exit("El producto no existe, no está disponible o no pertenece a este restaurante.");
+    }
+
+    // Agregar el producto validado al carrito
+    $pos = count($_SESSION["carrito"]) + 1;
+    $productos = array(
+        "posicion" => $pos,
+        "id" => $datos['id'], 
+        "nombre" => $datos['nombre'],
+        "precio" => $datos['precio']
+    );
     $_SESSION["carrito"][$pos] = $productos;
 }
 
