@@ -38,7 +38,7 @@ if (!$datos_restorant) {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="X-UA-Compatible" content="ie=edge">
-  <title><?php echo quitarespacios($datos_restorant['nombre']);?></title>
+  <title><?php echo limpiar_texto($datos_restorant['nombre']);?></title>
 	<!--<link rel="icon" href="img/Fevicon.png" type="image/png">-->
   <meta name="csrf-token" content="<?php echo $_SESSION['csrf_token']; ?>">
 
@@ -125,13 +125,13 @@ if (!$datos_restorant) {
                {
                  ?>
                
-              <h4><?php echo quitarespacios($datos_restorant['nombre']);?></h4>
+              <h4><?php echo limpiar_texto($datos_restorant['nombre']);?></h4>
               <h5>
                 <svg width="1em" height="1em" viewBox="0 0 16 16" class="bi bi-geo-alt" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
                   <path fill-rule="evenodd" d="M12.166 8.94C12.696 7.867 13 6.862 13 6A5 5 0 0 0 3 6c0 .862.305 1.867.834 2.94.524 1.062 1.234 2.12 1.96 3.07A31.481 31.481 0 0 0 8 14.58l.208-.22a31.493 31.493 0 0 0 1.998-2.35c.726-.95 1.436-2.008 1.96-3.07zM8 16s6-5.686 6-10A6 6 0 0 0 2 6c0 4.314 6 10 6 10z"/>
                   <path fill-rule="evenodd" d="M8 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm0 1a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/>
                 </svg>  
-              <?php echo quitarespacios($datos_restorant['calle'])." #".$datos_restorant['numero'].", ".quitarespacios($datos_restorant['comuna']);?>
+              <?php echo limpiar_texto($datos_restorant['calle'])." #".$datos_restorant['numero'].", ".limpiar_texto($datos_restorant['comuna']);?>
               </h5>
               <?php
                }
@@ -197,9 +197,9 @@ if (!$datos_restorant) {
               }
               ?>
           <div class="item-body">
-              <h3><?php echo quitarespacios($destacados['nombre']);?></h3>
-            <p><?php echo quitarespacios($destacados['descripcion']);?><br>
-            <?php echo quitarespacios($destacados['observaciones']);?><br>
+              <h3><?php echo limpiar_texto($destacados['nombre']);?></h3>
+            <p><?php echo limpiar_texto($destacados['descripcion']);?><br>
+            <?php echo limpiar_texto($destacados['observaciones']);?><br>
             <?php
             if($destacados['tiempo']!="")
             {
@@ -252,9 +252,9 @@ if (!$datos_restorant) {
                             $arraycartas=[];
                             while($cartas=$resultcartas->fetch())
                             {
-                              array_push($arraycartas,['nombre'=>quitarespacios($cartas['nombre']),'id'=>$cartas['id']]);
+                              array_push($arraycartas,['nombre'=>limpiar_texto($cartas['nombre']),'id'=>$cartas['id']]);
                             ?>
-                              <a class="nav-item nav-link" id="nav-<?php echo quitarespacios($cartas['nombre']);?>-tab" data-toggle="tab" href="#<?php echo quitarespacios($cartas['nombre']);?>" role="tab" aria-controls="nav-profile" aria-selected="false"><?php echo quitarespacios($cartas['nombre']);?></a>
+                              <a class="nav-item nav-link" id="nav-<?php echo limpiar_texto($cartas['nombre']);?>-tab" data-toggle="tab" href="#<?php echo limpiar_texto($cartas['nombre']);?>" role="tab" aria-controls="nav-profile" aria-selected="false"><?php echo limpiar_texto($cartas['nombre']);?></a>
                             <?php
                             }
                         ?>
@@ -265,7 +265,7 @@ if (!$datos_restorant) {
                      foreach ($arraycartas as $carta => $value)
                       {                             
                     ?>
-                    <div class="tab-pane fade <?php if($carta==0){?>show active<?php } ?>" id="<?php echo quitarespacios($arraycartas[$carta]["nombre"]);?>" role="tabpanel" aria-labelledby="nav-<?php echo quitarespacios($arraycartas[$carta]["nombre"]);?>-tab">              
+                    <div class="tab-pane fade <?php if($carta==0){?>show active<?php } ?>" id="<?php echo limpiar_texto($arraycartas[$carta]["nombre"]);?>" role="tabpanel" aria-labelledby="nav-<?php echo limpiar_texto($arraycartas[$carta]["nombre"]);?>-tab">              
                       <?php
                           $sql_categorias="select id,nombre from categorias where visible=1 and cartas_id='".$arraycartas[$carta]["id"]."' AND eliminado IS NULL order by orden asc";
                           $result_categorias=$con->prepare($sql_categorias);
@@ -286,7 +286,7 @@ if (!$datos_restorant) {
                               {
                               ?>
                                 <div class="section-intro mb-20px">
-                                    <h4 class="intro-title"><?php echo quitarespacios($datos_categorias['nombre']);?></h4>
+                                    <h4 class="intro-title"><?php echo limpiar_texto($datos_categorias['nombre']);?></h4>
                                 </div>
 
                                 <div class="row">
@@ -316,11 +316,11 @@ if (!$datos_restorant) {
                                                 ?>
                                                 <div class="media-body">
                                                   <div class="d-flex justify-content-between food-card-title">
-                                                    <h4><?php echo quitarespacios($datos_items['nombre']);?></h4>
+                                                    <h4><?php echo limpiar_texto($datos_items['nombre']);?></h4>
                                                     <h3 class="price-tag"><?php echo moneda_chilena($datos_items['precio']);?></h3>
                                                   </div>
-                                                  <p><?php echo quitarespacios($datos_items['descripcion']);?></br>
-                                                  <?php echo quitarespacios($datos_items['observaciones']);?></p>
+                                                  <p><?php echo limpiar_texto($datos_items['descripcion']);?></br>
+                                                  <?php echo limpiar_texto($datos_items['observaciones']);?></p>
                                                   <?php
                                                   if($datos_items['tiempo']!="")
                                                   {
@@ -437,9 +437,9 @@ if(isset($key))
           ?>
           <div class="card bg-light">
             <div class="card-body">
-              <b><?php echo quitarEspacios($datoscomentarios['usuario']);?></b>
+              <b><?php echo limpiar_texto($datoscomentarios['usuario']);?></b>
               <br>
-              <?php echo quitarEspacios($datoscomentarios['comentario']);?>
+              <?php echo limpiar_texto($datoscomentarios['comentario']);?>
             </div>
           </div>
           <br>

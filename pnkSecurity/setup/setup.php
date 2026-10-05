@@ -16,11 +16,13 @@ function conectar(): PDO
     }
 }
 
-function quitarespacios(?string $value): string
+function limpiar_texto(string $data): string
 {
-    return htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    $data = trim($data);
+    $data = stripslashes($data);
+    $data = htmlspecialchars($data);
+    return $data;
 }
-
 function construir_url(string $ruta, array $parametros = []): string
 {
     if (empty($parametros)) {

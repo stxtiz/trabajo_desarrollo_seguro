@@ -38,7 +38,7 @@ if (!$datos_restorant) {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="X-UA-Compatible" content="ie=edge">
-  <title><?php echo quitarespacios($datos_restorant['nombre']);?></title>
+  <title><?php echo limpiar_texto($datos_restorant['nombre']);?></title>
 	<!--<link rel="icon" href="img/Fevicon.png" type="image/png">-->
   <meta name="csrf-token" content="<?php echo $_SESSION['csrf_token']; ?>">
 
