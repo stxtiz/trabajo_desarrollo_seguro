@@ -1,12 +1,45 @@
 <?php
+declare(strict_types=1);
+require_once __DIR__ . '/setup/setup.php';
 
-include("setup/setup.php");
-session_start();
+iniciar_sesion();
 
-$sql="INSERT INTO comentarios SET usuario='".$_POST['usuario']."',comentario='".$_POST['comentario']."',id_restaurante=".$_SESSION['id'];
-mysqli_query(conectar(),$sql);
 
-header('Location:index.php?id='.$_SESSION['id'])
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    http_response_code(405);
+    exit;
+}
 
+if (!isset($_SESSION['nombre'], $_SESSION['id'])) {
+    http_response_code(403);
+    exit;
+}
+
+if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) {
+    http_response_code(403);
+    exit("CSRF token validation failed");
+}
+
+$usuarioSesion = (string) $_SESSION['nombre'];
+$comentario = trim((string) (quitarEspacios($_POST['comentario'] ?? '')));
+$idRestaurante = (int) $_SESSION['id'];
+
+
+if  ($comentario === '' || $idRestaurante <= 0) {
+    http_response_code(400);
+    echo "Datos inválidos.";
+    exit;
+}
+
+$sql = 'INSERT INTO comentarios (usuario, comentario, id_restaurante)
+        VALUES (:usuario, :comentario, :id_restaurante)';
+$stmt = conectar()->prepare($sql);
+$stmt-> execute([
+    ':usuario' => $usuarioSesion,
+    ':comentario' => $comentario,
+    ':id_restaurante' => $idRestaurante
+]);
+header('Location: index.php?id=' . $idRestaurante);
+exit;
 
 ?>
