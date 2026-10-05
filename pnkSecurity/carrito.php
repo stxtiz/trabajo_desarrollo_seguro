@@ -1,7 +1,12 @@
 <?php
 
 include("setup/setup.php");
-session_start();
+iniciar_sesion();
+
+if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) {
+    http_response_code(403);
+    exit("CSRF token validation failed");
+}
 
 switch($_POST['op'])
 {
@@ -15,10 +20,22 @@ switch($_POST['op'])
 
 function insertar()
 {
-    $_SESSION["carrito"];
-    $sql="select id, nombre, precio from items where id=".$_POST['iditems'];
-    $result=mysqli_query(conectar(),$sql);
-    $datos=mysqli_fetch_array($result);
+    if (!isset($_SESSION['carrito']) || !is_array($_SESSION['carrito'])) {
+    $_SESSION['carrito'] = [];
+    }
+
+    $idItem = filter_input(INPUT_POST, 'iditems', FILTER_VALIDATE_INT);
+    if ($idItem === false || $idItem === null) {
+        http_response_code(400);
+        return;
+    }
+    
+    $stmt = conectar()-> prepare(
+        'SELECT id, nombre, precio FROM items
+        WHERE id = :id AND visible = 1 AND eliminado IS NULL'
+    );
+    $stmt->execute([':id' => $idItem]);
+    $datos = $stmt->fetch(PDO::FETCH_ASSOC);
 
     $pos=count($_SESSION["carrito"])+1;
     $productos = array("posicion"=>$pos,"id" => $datos['id'], "nombre" =>$datos['nombre'],"precio"=>$datos['precio']);
@@ -32,6 +49,6 @@ function eliminaritems()
 
 function eliminartodo()
 {
-    session_destroy();
+    unset($_SESSION['carrito']);
 }
 ?>

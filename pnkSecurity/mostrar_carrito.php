@@ -1,13 +1,35 @@
 <?php
 include("setup/setup.php");
-session_start();
+iniciar_sesion();
 
-$key=$_GET['id'];
+$con = conectar();
+// 1. Validar que venga el ID (o keyid) en la URL y que sea un número
+$key = filter_input(INPUT_GET, 'keyid', FILTER_VALIDATE_INT) ?: filter_input(INPUT_GET, 'id', FILTER_VALIDATE_INT);
 
-$sql_restorant="SELECT direcciones.calle, direcciones.numero, direcciones.comuna, direcciones.region, restautantes.nombre, restautantes.id, restautantes.fono, restautantes.email, restautantes.foto FROM restautantes INNER JOIN direcciones ON restautantes.direcciones_id =
-direcciones.id WHERE restautantes.id = ".$key;
-$result_restorant=mysqli_query(conectar(),$sql_restorant);
-$datos_restorant=mysqli_fetch_array($result_restorant);
+if (!$key) {
+    die("Error: Debes proveer un ID de restaurante válido.");
+}
+
+// 2. Inicializar el carrito SÓLO si no existe. 
+// (Lo que tenías antes borraba todo el carrito cada vez que entrabas a esta página)
+if (!isset($_SESSION['carrito']) || !is_array($_SESSION['carrito'])) {
+    $_SESSION['carrito'] = [];
+}
+
+$sql_restorant = "SELECT direcciones.calle, direcciones.numero, direcciones.comuna, direcciones.region, restautantes.nombre, restautantes.id, restautantes.fono, restautantes.email, restautantes.foto 
+FROM restautantes 
+INNER JOIN direcciones ON restautantes.direcciones_id = direcciones.id 
+WHERE restautantes.id = :id AND restautantes.eliminado IS NULL";
+
+$stmt = $con->prepare($sql_restorant);
+$stmt->execute(['id' => $key]);
+
+$datos_restorant = $stmt->fetch(PDO::FETCH_ASSOC);
+
+
+if (!$datos_restorant) {
+    die("El restaurante no fue encontrado.");
+}
 
 ?>
 <!DOCTYPE html>
@@ -16,8 +38,9 @@ $datos_restorant=mysqli_fetch_array($result_restorant);
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="X-UA-Compatible" content="ie=edge">
-  <title><?php echo $datos_restorant['nombre'];?></title>
+  <title><?php echo quitarespacios($datos_restorant['nombre']);?></title>
 	<!--<link rel="icon" href="img/Fevicon.png" type="image/png">-->
+  <meta name="csrf-token" content="<?php echo $_SESSION['csrf_token']; ?>">
 
   <link rel="stylesheet" href="vendors/bootstrap/bootstrap.min.css">
   <link rel="stylesheet" href="vendors/themify-icons/themify-icons.css">
@@ -58,7 +81,7 @@ $datos_restorant=mysqli_fetch_array($result_restorant);
         <div class="col-lg-4">
           <div class="carro">
             <div class="media float-right">
-              <a class="volver" href="index.php?id=<?php echo $_GET['keyid'];?>">
+              <a class="volver" href="<?php echo  construir_url('index.php', ['id' => $key]); ?>">
               Volver a la Carta
               </a>&nbsp;&nbsp;
               <a class="limpiar" href="#">
