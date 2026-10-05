@@ -21,7 +21,7 @@ if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST
 }
 
 $usuarioSesion = (string) $_SESSION['nombre'];
-$comentario = trim((string) (quitarEspacios($_POST['comentario'] ?? '')));
+$comentario = trim((string) (limpiar_texto($_POST['comentario'] ?? '')));
 $idRestaurante = (int) $_SESSION['id'];
 
 
