@@ -389,7 +389,7 @@ if(isset($key))
              <form action="grcomentarios.php" method="post">
               <div class="form-group">
                 <label for="usr">Nombre:</label>
-                <input type="text" class="form-control" id="usuario" name="usuario" value="<?php echo $_SESSION['nombre'];?>">
+                <input type="text" class="form-control" id="usuario" name="usuario" value="<?php echo $_SESSION['nombre'];?>" disabled>
               </div>
               <div class="form-group">
                 <label for="comment">Comentario:</label>
