@@ -6,6 +6,11 @@ function conectar()
     return $con;
 }
 
+function limpiar_texto(?string $value): string
+{
+    return htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+}
+
 function quitarespacios($titulo)
 {
     $titulo =str_replace(" ", "", $titulo);
