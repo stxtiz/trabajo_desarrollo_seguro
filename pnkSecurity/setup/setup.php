@@ -2,10 +2,10 @@
 
 function conectar(): PDO
 {
-    $host = "db-prueba";
-    $db = "pnk_security";
-    $user = "root";
-    $pass = "";
+    $host = getenv('MYSQL_HOST') ?: '';
+    $db   = getenv('MYSQL_DATABASE') ?: '';
+    $user = getenv('MYSQL_USER') ?: '';
+    $pass = getenv('MYSQL_PASSWORD') ?: '';
     $dsn = "mysql:host=$host;dbname=$db;charset=utf8mb4";
     
     try {
