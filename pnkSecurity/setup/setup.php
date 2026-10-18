@@ -1,9 +1,19 @@
 <?php
 
-function conectar()
+function conectar(): PDO
 {
-    $con=mysqli_connect("localhost","root","","pnk_security");
-    return $con;
+    $host = "db-prueba";
+    $db = "pnk_security";
+    $user = "root";
+    $pass = "";
+    $dsn = "mysql:host=$host;dbname=$db;charset=utf8mb4";
+    
+    try {
+        $con = new PDO($dsn, $user, $pass);
+        return $con;
+    } catch (PDOException $e) {
+        throw new RuntimeException("Error de conexión a la base de datos");
+    }
 }
 
 function limpiar_texto(?string $value): string

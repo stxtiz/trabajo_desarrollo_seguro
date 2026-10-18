@@ -2,12 +2,26 @@
 include("setup/setup.php");
 session_start();
 
-$key=$_GET['id'];
+$con = conectar();
+$key = filter_input(INPUT_GET, 'keyid', FILTER_VALIDATE_INT) ?: filter_input(INPUT_GET, 'id', FILTER_VALIDATE_INT);
 
-$sql_restorant="SELECT direcciones.calle, direcciones.numero, direcciones.comuna, direcciones.region, restautantes.nombre, restautantes.id, restautantes.fono, restautantes.email, restautantes.foto FROM restautantes INNER JOIN direcciones ON restautantes.direcciones_id =
-direcciones.id WHERE restautantes.id = ".$key;
-$result_restorant=mysqli_query(conectar(),$sql_restorant);
-$datos_restorant=mysqli_fetch_array($result_restorant);
+if (!$key) {
+    die("Error: Debes proveer un ID de restaurante válido.");
+}
+
+$sql_restorant = "SELECT direcciones.calle, direcciones.numero, direcciones.comuna, direcciones.region, restautantes.nombre, restautantes.id, restautantes.fono, restautantes.email, restautantes.foto 
+FROM restautantes 
+INNER JOIN direcciones ON restautantes.direcciones_id = direcciones.id 
+WHERE restautantes.id = :id AND restautantes.eliminado IS NULL";
+
+$stmt = $con->prepare($sql_restorant);
+$stmt->execute(['id' => $key]);
+
+$datos_restorant = $stmt->fetch(PDO::FETCH_ASSOC);
+
+if (!$datos_restorant) {
+    die("El restaurante no fue encontrado.");
+}
 
 ?>
 <!DOCTYPE html>

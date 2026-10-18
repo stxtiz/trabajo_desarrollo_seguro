@@ -24,8 +24,14 @@ if ($comentario === '' || $idRestaurante <= 0) {
     exit;
 }
 
-$sql="INSERT INTO comentarios SET usuario='".$usuarioSesion."',comentario='".$comentario."',id_restaurante=".$idRestaurante;
-mysqli_query(conectar(),$sql);
+$sql = 'INSERT INTO comentarios (usuario, comentario, id_restaurante)
+        VALUES (:usuario, :comentario, :id_restaurante)';
+$stmt = conectar()->prepare($sql);
+$stmt->execute([
+    ':usuario' => $usuarioSesion,
+    ':comentario' => $comentario,
+    ':id_restaurante' => $idRestaurante
+]);
 
 header('Location: index.php?id=' . $idRestaurante);
 exit;

@@ -16,9 +16,14 @@ switch($_POST['op'])
 function insertar()
 {
     $_SESSION["carrito"];
-    $sql="select id, nombre, precio from items where id=".$_POST['iditems'];
-    $result=mysqli_query(conectar(),$sql);
-    $datos=mysqli_fetch_array($result);
+    $idItem = filter_input(INPUT_POST, 'iditems', FILTER_VALIDATE_INT);
+    if ($idItem === false || $idItem <= 0) {
+        http_response_code(400);
+        exit("ID de ítem inválido.");
+    }
+    $stmt = conectar()->prepare('SELECT id, nombre, precio FROM items WHERE id = :id');
+    $stmt->execute([':id' => $idItem]);
+    $datos = $stmt->fetch(PDO::FETCH_ASSOC);
 
     $pos=count($_SESSION["carrito"])+1;
     $productos = array("posicion"=>$pos,"id" => $datos['id'], "nombre" =>$datos['nombre'],"precio"=>$datos['precio']);
