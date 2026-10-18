@@ -1,6 +1,6 @@
 <?php
 include("setup/setup.php");
-session_start();
+iniciar_sesion();
 
 $con = conectar();
 $key = filter_input(INPUT_GET, 'keyid', FILTER_VALIDATE_INT) ?: filter_input(INPUT_GET, 'id', FILTER_VALIDATE_INT);

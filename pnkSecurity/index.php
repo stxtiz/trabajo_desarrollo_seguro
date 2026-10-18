@@ -1,7 +1,8 @@
 <?php
 
-include("setup/setup.php");
-session_start();
+declare(strict_types=1);
+require_once __DIR__ . '/setup/setup.php';
+iniciar_sesion();
 
 $con = conectar();
 // 1. Validar que venga el ID en la URL y que sea un número

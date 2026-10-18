@@ -2,7 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__ .'/setup.php';
 
-session_start();
+iniciar_sesion();
 $idRestaurante = $_SESSION['id'] ?? 1;
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {

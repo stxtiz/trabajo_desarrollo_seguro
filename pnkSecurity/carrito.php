@@ -1,7 +1,7 @@
 <?php
 
 include("setup/setup.php");
-session_start();
+iniciar_sesion();
 
 switch($_POST['op'])
 {
