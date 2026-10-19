@@ -33,7 +33,8 @@ $stmt->execute([
 ]);
 $datos = $stmt->fetch(PDO::FETCH_ASSOC);
 
-$credencialesValidas = $datos !== false && $datos['password'] === $password;
+$credencialesValidas = $datos !== false 
+    && password_verify($password, (string) $datos['password']);
 
 registrar_intento_login($usuario, $credencialesValidas);
 
@@ -49,6 +50,7 @@ if ($credencialesValidas) {
     $_SESSION['nombre'] = $datos['nombre'];
     $_SESSION['auth_time'] = time();
     $_SESSION['last_activity'] = time();
+    unset($datos['password']);
     error_log(sprintf('[SECURITY_AUTH] evento=AUTH_LOGIN_SUCCESS usuario_id=%d email=%s ip=%s', (int) $datos['id'], $usuario, $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0'));
     header('Location: ../index.php?id=' . $idRestaurante);
     exit;
