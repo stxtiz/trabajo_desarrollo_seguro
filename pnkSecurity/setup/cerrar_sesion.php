@@ -15,6 +15,7 @@ if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST
 }
 
 $idRestaurante = $_SESSION['id'] ?? 1;
+error_log(sprintf('[SECURITY_AUTH] evento=AUTH_LOGOUT usuario_id=%s ip=%s', (string) ($_SESSION['usuario_id'] ?? 'anon'), $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0'));
 $_SESSION = [];
 if (ini_get('session.use_cookies')) {
     $p = session_get_cookie_params();

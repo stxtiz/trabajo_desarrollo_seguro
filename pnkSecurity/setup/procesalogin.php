@@ -37,12 +37,19 @@ $credencialesValidas = $datos !== false && $datos['password'] === $password;
 
 registrar_intento_login($usuario, $credencialesValidas);
 
+if (!$credencialesValidas) {
+    error_log(sprintf('[SECURITY_AUTH] evento=AUTH_LOGIN_FAILED email=%s ip=%s', $usuario, $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0'));
+    header('Location: ../index.php?id=' . $idRestaurante);
+    exit;
+}
+
 if ($credencialesValidas) {
     session_regenerate_id(true);
     $_SESSION['usuario_id'] = (int) $datos['id'];
     $_SESSION['nombre'] = $datos['nombre'];
     $_SESSION['auth_time'] = time();
     $_SESSION['last_activity'] = time();
+    error_log(sprintf('[SECURITY_AUTH] evento=AUTH_LOGIN_SUCCESS usuario_id=%d email=%s ip=%s', (int) $datos['id'], $usuario, $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0'));
     header('Location: ../index.php?id=' . $idRestaurante);
     exit;
 }

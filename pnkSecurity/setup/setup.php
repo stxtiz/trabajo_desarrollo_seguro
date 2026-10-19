@@ -129,6 +129,7 @@ function verificar_rate_limit_login(string $email): void
         $datos = json_decode((string) file_get_contents($archivo), true);
         if (is_array($datos) && ($ahora - ($datos['primer_intento'] ?? 0)) < $ventana) {
             if (($datos['intentos'] ?? 0) >= $maxIntentos) {
+                error_log(sprintf('[SECURITY_AUTH] evento=AUTH_LOCKOUT email=%s ip=%s', $email, $ip));
                 http_response_code(429);
                 exit('Demasiados intentos fallidos. Intente nuevamente más tarde.');
             }
