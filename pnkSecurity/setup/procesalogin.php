@@ -18,6 +18,8 @@ if ($usuario === false || $usuario === null || $password === '') {
     exit;
 }
 
+verificar_rate_limit_login($usuario);
+
 $pdo = conectar();
 $stmt = $pdo->prepare(
     'SELECT id, nombre, email, password, estado 
@@ -31,7 +33,11 @@ $stmt->execute([
 ]);
 $datos = $stmt->fetch(PDO::FETCH_ASSOC);
 
-if ($datos !== false && $datos['password'] === $password) {
+$credencialesValidas = $datos !== false && $datos['password'] === $password;
+
+registrar_intento_login($usuario, $credencialesValidas);
+
+if ($credencialesValidas) {
     session_regenerate_id(true);
     $_SESSION['usuario_id'] = (int) $datos['id'];
     $_SESSION['nombre'] = $datos['nombre'];

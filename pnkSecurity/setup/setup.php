@@ -116,4 +116,48 @@ function iniciar_sesion(): void
     }
 }
 
+function verificar_rate_limit_login(string $email): void
+{
+    $ip = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+    $clave = hash('sha256', strtolower($email) . '|' . $ip);
+    $archivo = sys_get_temp_dir() . '/pnk_rl_' . $clave . '.json';
+    $ventana = 900; // 15 minutos
+    $maxIntentos = 5;
+    $ahora = time();
+
+    if (is_file($archivo)) {
+        $datos = json_decode((string) file_get_contents($archivo), true);
+        if (is_array($datos) && ($ahora - ($datos['primer_intento'] ?? 0)) < $ventana) {
+            if (($datos['intentos'] ?? 0) >= $maxIntentos) {
+                http_response_code(429);
+                exit('Demasiados intentos fallidos. Intente nuevamente más tarde.');
+            }
+        }
+    }
+}
+
+function registrar_intento_login(string $email, bool $exito): void
+{
+    $ip = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+    $clave = hash('sha256', strtolower($email) . '|' . $ip);
+    $archivo = sys_get_temp_dir() . '/pnk_rl_' . $clave . '.json';
+    if ($exito) {
+        if (is_file($archivo)) {
+            @unlink($archivo);
+        }
+        return;
+    }
+    $ahora = time();
+    $datos = ['intentos' => 0, 'primer_intento' => $ahora];
+    if (is_file($archivo)) {
+        $leido = json_decode((string) file_get_contents($archivo), true);
+        if (is_array($leido) && ($ahora - ($leido['primer_intento'] ?? 0)) < 900) {
+            $datos = $leido;
+        }
+    }
+    $datos['intentos']++;
+    file_put_contents($archivo, json_encode($datos), LOCK_EX);
+    usleep(min($datos['intentos'] * 250000, 1500000));
+}
+
 ?>
