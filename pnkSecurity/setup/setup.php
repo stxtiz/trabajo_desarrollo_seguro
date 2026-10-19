@@ -73,6 +73,20 @@ function iniciar_sesion(): void
     if (empty($_SESSION['csrf_token'])) {
         $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
     }
+
+    if (isset($_SESSION['usuario_id'])) {
+        $stmt = conectar()->prepare('SELECT nombre, estado FROM usuarios WHERE id = :id LIMIT 1');
+        $stmt->execute([':id' => (int) $_SESSION['usuario_id']]);
+        $usuarioActual = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$usuarioActual || (string) $usuarioActual['estado'] !== '1') {
+            $_SESSION = [];
+            session_destroy();
+            session_start();
+        } else {
+            $_SESSION['nombre'] = $usuarioActual['nombre'];
+        }
+    }
 }
 
 ?>
