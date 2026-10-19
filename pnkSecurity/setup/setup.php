@@ -21,12 +21,13 @@ function limpiar_texto(?string $value): string
     return htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
-function quitarespacios($titulo)
+function construir_url(string $ruta, array $parametros = []): string
 {
-    $titulo =str_replace(" ", "", $titulo);
-    $cadena =str_replace("ñ", "", $titulo);
-    $cadena =str_replace("Ñ", "", $cadena);
-    return $cadena;
+    if (empty($parametros)) {
+        return htmlspecialchars($ruta, ENT_QUOTES, 'UTF-8');
+    }
+    $query = http_build_query($parametros);
+    return htmlspecialchars($ruta . '?' . $query, ENT_QUOTES, 'UTF-8');
 }
 
 function moneda_chilena($numero){
