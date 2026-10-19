@@ -56,6 +56,8 @@ function iniciar_sesion(): void
             'httponly' => true,
             'samesite' => 'Lax',
         ]);
+        ini_set('session.use_strict_mode', '1');
+        ini_set('session.use_only_cookies', '1');
         session_start();
     }
     ini_set('display_errors', '0');

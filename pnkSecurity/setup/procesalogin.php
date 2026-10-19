@@ -32,6 +32,8 @@ $stmt->execute([
 $datos = $stmt->fetch(PDO::FETCH_ASSOC);
 
 if ($datos !== false && $datos['password'] === $password) {
+    session_regenerate_id(true);
+    $_SESSION['usuario_id'] = (int) $datos['id'];
     $_SESSION['nombre'] = $datos['nombre'];
     header('Location: ../index.php?id=' . $idRestaurante);
     exit;
