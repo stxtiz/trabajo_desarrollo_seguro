@@ -61,6 +61,9 @@ function iniciar_sesion(): void
         ini_set('session.use_only_cookies', '1');
         session_start();
     }
+    // Mitigación de Clickjacking
+    header('X-Frame-Options: DENY');
+    header("Content-Security-Policy: frame-ancestors 'none'");
     ini_set('display_errors', '0');
     ini_set('log_errors', '1');
     header_remove('X-Powered-By');
