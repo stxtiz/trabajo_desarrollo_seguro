@@ -70,6 +70,17 @@ function iniciar_sesion(): void
     header('X-Content-Type-Options: nosniff');
     header('Referrer-Policy: strict-origin-when-cross-origin');
 
+    if (getenv('ENFORCE_HTTPS') === '1' && !$esHttps) {
+        $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+        $uri  = $_SERVER['REQUEST_URI'] ?? '/';
+        header('Location: https://' . $host . $uri, true, 301);
+        exit;
+    }
+
+    if ($esHttps) {
+        header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
+    }
+
     if (empty($_SESSION['csrf_token'])) {
         $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
     }
