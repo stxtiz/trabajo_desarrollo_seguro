@@ -73,6 +73,22 @@ function iniciar_sesion(): void
     if (empty($_SESSION['csrf_token'])) {
         $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
     }
+    $tiempoInactividadMax = 1800; // 30 minutos
+    $tiempoAbsolutoMax    = 28800; // 8 horas
+    $ahora = time();
+
+    if (isset($_SESSION['usuario_id'])) {
+        $inactivoExcedido = isset($_SESSION['last_activity']) && (($ahora - (int) $_SESSION['last_activity']) > $tiempoInactividadMax);
+        $absolutoExcedido = isset($_SESSION['auth_time']) && (($ahora - (int) $_SESSION['auth_time']) > $tiempoAbsolutoMax);
+
+        if ($inactivoExcedido || $absolutoExcedido) {
+            $_SESSION = [];
+            session_destroy();
+            session_start();
+        } else {
+            $_SESSION['last_activity'] = $ahora;
+        }
+    }
 
     if (isset($_SESSION['usuario_id'])) {
         $stmt = conectar()->prepare('SELECT nombre, estado FROM usuarios WHERE id = :id LIMIT 1');

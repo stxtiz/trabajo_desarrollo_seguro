@@ -35,6 +35,8 @@ if ($datos !== false && $datos['password'] === $password) {
     session_regenerate_id(true);
     $_SESSION['usuario_id'] = (int) $datos['id'];
     $_SESSION['nombre'] = $datos['nombre'];
+    $_SESSION['auth_time'] = time();
+    $_SESSION['last_activity'] = time();
     header('Location: ../index.php?id=' . $idRestaurante);
     exit;
 }
