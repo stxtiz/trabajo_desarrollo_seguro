@@ -14,6 +14,11 @@ if (!isset($_SESSION['nombre'], $_SESSION['id'])) {
     exit;
 }
 
+if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) {
+    http_response_code(403);
+    exit("CSRF token validation failed");
+}
+
 $usuarioSesion = (string) $_SESSION['nombre'];
 $comentario = trim((string) (limpiar_texto($_POST['comentario'] ?? '')));
 $idRestaurante = (int) $_SESSION['id'];

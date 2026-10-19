@@ -3,6 +3,11 @@
 include("setup/setup.php");
 iniciar_sesion();
 
+if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) {
+    http_response_code(403);
+    exit("CSRF token validation failed");
+}
+
 switch($_POST['op'])
 {
     case "1": insertar();
@@ -37,6 +42,6 @@ function eliminaritems()
 
 function eliminartodo()
 {
-    session_destroy();
+    unset($_SESSION['carrito']);
 }
 ?>

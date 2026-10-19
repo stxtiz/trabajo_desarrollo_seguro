@@ -40,6 +40,7 @@ if (!$datos_restorant) {
   <meta http-equiv="X-UA-Compatible" content="ie=edge">
   <title><?php echo limpiar_texto($datos_restorant['nombre']);?></title>
 	<!--<link rel="icon" href="img/Fevicon.png" type="image/png">-->
+  <meta name="csrf-token" content="<?php echo $_SESSION['csrf_token']; ?>">
 
   <link rel="stylesheet" href="vendors/bootstrap/bootstrap.min.css">
   <link rel="stylesheet" href="vendors/themify-icons/themify-icons.css">
@@ -68,7 +69,10 @@ if (!$datos_restorant) {
       </form>
     <?php
     }else{
-      echo "Bienvenido :".$_SESSION['nombre']." - <a href=setup/cerrar_sesion.php>Cerra Sesión</a>";
+      echo "Bienvenido :".$_SESSION['nombre']." - <a href=\"#\" onclick=\"event.preventDefault(); document.getElementById('logout-form').submit();\">Cerra Sesión</a>";
+      echo "<form id=\"logout-form\" action=\"setup/cerrar_sesion.php\" method=\"post\" style=\"display: none;\">";
+      echo "<input type=\"hidden\" name=\"csrf_token\" value=\"".$_SESSION['csrf_token']."\">";
+      echo "</form>";
     }
   ?>
 </nav>
@@ -421,6 +425,7 @@ if(isset($key))
             {
              ?>
              <form action="grcomentarios.php" method="post">
+              <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
               <div class="form-group">
                 <label for="usr">Nombre:</label>
                 <input type="text" class="form-control" id="usuario" name="usuario" value="<?php echo $_SESSION['nombre'];?>" disabled>

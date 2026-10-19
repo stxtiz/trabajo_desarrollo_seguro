@@ -32,6 +32,7 @@ if (!$datos_restorant) {
   <meta http-equiv="X-UA-Compatible" content="ie=edge">
   <title><?php echo limpiar_texto($datos_restorant['nombre']);?></title>
 	<!--<link rel="icon" href="img/Fevicon.png" type="image/png">-->
+  <meta name="csrf-token" content="<?php echo $_SESSION['csrf_token']; ?>">
 
   <link rel="stylesheet" href="vendors/bootstrap/bootstrap.min.css">
   <link rel="stylesheet" href="vendors/themify-icons/themify-icons.css">
