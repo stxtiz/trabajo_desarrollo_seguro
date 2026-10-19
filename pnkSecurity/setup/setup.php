@@ -58,6 +58,11 @@ function iniciar_sesion(): void
         ]);
         session_start();
     }
+    ini_set('display_errors', '0');
+    ini_set('log_errors', '1');
+    header_remove('X-Powered-By');
+    header('X-Content-Type-Options: nosniff');
+    header('Referrer-Policy: strict-origin-when-cross-origin');
 
     if (empty($_SESSION['csrf_token'])) {
         $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
