@@ -3,10 +3,17 @@ include("setup/setup.php");
 iniciar_sesion();
 
 $con = conectar();
+// 1. Validar que venga el ID (o keyid) en la URL y que sea un número
 $key = filter_input(INPUT_GET, 'keyid', FILTER_VALIDATE_INT) ?: filter_input(INPUT_GET, 'id', FILTER_VALIDATE_INT);
 
 if (!$key) {
     die("Error: Debes proveer un ID de restaurante válido.");
+}
+
+// 2. Inicializar el carrito SÓLO si no existe. 
+// (Lo que tenías antes borraba todo el carrito cada vez que entrabas a esta página)
+if (!isset($_SESSION['carrito']) || !is_array($_SESSION['carrito'])) {
+    $_SESSION['carrito'] = [];
 }
 
 $sql_restorant = "SELECT direcciones.calle, direcciones.numero, direcciones.comuna, direcciones.region, restautantes.nombre, restautantes.id, restautantes.fono, restautantes.email, restautantes.foto 
@@ -18,6 +25,7 @@ $stmt = $con->prepare($sql_restorant);
 $stmt->execute(['id' => $key]);
 
 $datos_restorant = $stmt->fetch(PDO::FETCH_ASSOC);
+
 
 if (!$datos_restorant) {
     die("El restaurante no fue encontrado.");
