@@ -88,21 +88,23 @@ ls -lh ~/backups_pnk/
 
 ### Paso 3: Sincronizar el Repositorio con la Rama `PHP-8.5`
 
-Descargar las últimas modificaciones desde GitHub:
+Si el servidor tiene cambios locales que no quieres perder ni subir:
 
 ```bash
-# Comprobar el estado actual
-git status
+# 1. Guardar tus cambios locales en el stash (sin perderlos ni subirlos)
+git stash -u -m "cambios_locales_servidor"
 
-# Descargar las nuevas ramas remotas
+# 2. Descargar las nuevas ramas remotas
 git fetch origin
 
-# Cambiar a la rama PHP-8.5
+# 3. Cambiar a la rama PHP-8.5
 git checkout PHP-8.5
 
-# Actualizar al último commit
+# 4. Actualizar al último commit
 git pull origin PHP-8.5
 ```
+
+> **Nota:** Si deseas volver a ver o reincorporar tus cambios guardados en cualquier momento, ejecuta `git stash pop` o `git stash list`. Si prefieres dejarlos archivados en el servidor, no necesitas hacer nada más.
 
 ---
 
