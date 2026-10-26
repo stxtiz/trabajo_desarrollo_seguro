@@ -12,12 +12,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN mv "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini"
 
 # Inyectar directivas de seguridad en la configuración de PHP
+# Se dirige error_log a /proc/self/fd/2 para que sea visible en docker logs
 RUN { \
     echo 'expose_php = Off'; \
     echo 'display_errors = Off'; \
     echo 'display_startup_errors = Off'; \
     echo 'log_errors = On'; \
-    echo 'error_log = /var/log/apache2/php_errors.log'; \
+    echo 'error_log = /proc/self/fd/2'; \
     echo 'error_reporting = E_ALL & ~E_DEPRECATED & ~E_STRICT'; \
     echo 'session.cookie_httponly = 1'; \
     echo 'session.use_strict_mode = 1'; \

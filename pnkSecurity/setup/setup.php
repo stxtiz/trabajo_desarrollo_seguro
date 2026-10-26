@@ -11,10 +11,10 @@ function conectar(): PDO
         return $con;
     }
 
-    $host = getenv('MYSQL_HOST') ?: '127.0.0.1';
-    $db   = getenv('MYSQL_DATABASE') ?: '';
-    $user = getenv('MYSQL_USER') ?: '';
-    $pass = getenv('MYSQL_PASSWORD') ?: '';
+    $host = getenv('MYSQL_HOST') ?: 'db-prueba';
+    $db   = getenv('MYSQL_DATABASE') ?: 'pnk_security';
+    $user = getenv('MYSQL_USER') ?: 'root';
+    $pass = getenv('MYSQL_PASSWORD') ?: (getenv('MYSQL_ROOT_PASSWORD') ?: '');
     $dsn  = "mysql:host={$host};dbname={$db};charset=utf8mb4";
 
     $opciones = [
@@ -28,7 +28,7 @@ function conectar(): PDO
         $con = new PDO($dsn, $user, $pass, $opciones);
         return $con;
     } catch (PDOException $e) {
-        error_log('[DB_CONN_ERROR] ' . $e->getMessage());
+        error_log(sprintf('[DB_CONN_ERROR] Error al conectar a MySQL: %s (Host=%s, DB=%s, User=%s)', $e->getMessage(), $host, $db, $user));
         throw new RuntimeException("Error de conexión a la base de datos", 0, $e);
     }
 }
