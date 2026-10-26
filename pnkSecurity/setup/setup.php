@@ -1,18 +1,35 @@
 <?php
+declare(strict_types=1);
 
+/**
+ * Conexión centralizada a base de datos con patrón de instancia única (Memoización)
+ */
 function conectar(): PDO
 {
-    $host = getenv('MYSQL_HOST') ?: '';
+    static $con = null;
+    if ($con instanceof PDO) {
+        return $con;
+    }
+
+    $host = getenv('MYSQL_HOST') ?: '127.0.0.1';
     $db   = getenv('MYSQL_DATABASE') ?: '';
     $user = getenv('MYSQL_USER') ?: '';
     $pass = getenv('MYSQL_PASSWORD') ?: '';
-    $dsn = "mysql:host=$host;dbname=$db;charset=utf8mb4";
-    
+    $dsn  = "mysql:host={$host};dbname={$db};charset=utf8mb4";
+
+    $opciones = [
+        PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        PDO::ATTR_EMULATE_PREPARES   => false,
+        PDO::ATTR_STRINGIFY_FETCHES  => false,
+    ];
+
     try {
-        $con = new PDO($dsn, $user, $pass);
+        $con = new PDO($dsn, $user, $pass, $opciones);
         return $con;
     } catch (PDOException $e) {
-        throw new RuntimeException("Error de conexión a la base de datos");
+        error_log('[DB_CONN_ERROR] ' . $e->getMessage());
+        throw new RuntimeException("Error de conexión a la base de datos", 0, $e);
     }
 }
 
@@ -30,30 +47,25 @@ function construir_url(string $ruta, array $parametros = []): string
     return htmlspecialchars($ruta . '?' . $query, ENT_QUOTES, 'UTF-8');
 }
 
-function moneda_chilena($numero){
-    $numero = (string)$numero;
-    $puntos = floor((strlen($numero)-1)/3);
-    $tmp = "";
-    $pos = 1;
-    for($i=strlen($numero)-1; $i>=0; $i--){
-    $tmp = $tmp.substr($numero, $i, 1);
-    if($pos%3==0 && $pos!=strlen($numero))
-    $tmp = $tmp.".";
-    $pos = $pos + 1;
-    }
-    $formateado = "$ ".strrev($tmp);
-    return $formateado;
-    }
-
+/**
+ * Formateo numérico a peso chileno moderno compatible con PHP 8.x
+ */
+function moneda_chilena(int|float|string|null $numero): string
+{
+    return '$ ' . number_format((float) ($numero ?? 0), 0, ',', '.');
+}
 
 function iniciar_sesion(): void
 {
-    $esHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || (isset($_SERVER['SERVER_PORT']) && (int) $_SERVER['SERVER_PORT'] === 443);
+    $esHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+        || (isset($_SERVER['SERVER_PORT']) && (int) $_SERVER['SERVER_PORT'] === 443)
+        || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
+
     if (session_status() !== PHP_SESSION_ACTIVE) {
         session_set_cookie_params([
             'lifetime' => 0,
-            'path' => '/',
-            'secure' => $esHttps,
+            'path'     => '/',
+            'secure'   => $esHttps,
             'httponly' => true,
             'samesite' => 'Lax',
         ]);
@@ -61,7 +73,8 @@ function iniciar_sesion(): void
         ini_set('session.use_only_cookies', '1');
         session_start();
     }
-    // Mitigación de Clickjacking
+
+    // Cabeceras de protección básicas a nivel de respuesta
     header('X-Frame-Options: DENY');
     header("Content-Security-Policy: frame-ancestors 'none'");
     ini_set('display_errors', '0');
@@ -84,6 +97,7 @@ function iniciar_sesion(): void
     if (empty($_SESSION['csrf_token'])) {
         $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
     }
+
     $tiempoInactividadMax = 1800; // 30 minutos
     $tiempoAbsolutoMax    = 28800; // 8 horas
     $ahora = time();
@@ -94,8 +108,7 @@ function iniciar_sesion(): void
 
         if ($inactivoExcedido || $absolutoExcedido) {
             $_SESSION = [];
-            session_destroy();
-            session_start();
+            session_regenerate_id(true);
         } else {
             $_SESSION['last_activity'] = $ahora;
         }
@@ -104,12 +117,11 @@ function iniciar_sesion(): void
     if (isset($_SESSION['usuario_id'])) {
         $stmt = conectar()->prepare('SELECT nombre, estado FROM usuarios WHERE id = :id LIMIT 1');
         $stmt->execute([':id' => (int) $_SESSION['usuario_id']]);
-        $usuarioActual = $stmt->fetch(PDO::FETCH_ASSOC);
+        $usuarioActual = $stmt->fetch();
 
         if (!$usuarioActual || (string) $usuarioActual['estado'] !== '1') {
             $_SESSION = [];
-            session_destroy();
-            session_start();
+            session_regenerate_id(true);
         } else {
             $_SESSION['nombre'] = $usuarioActual['nombre'];
         }
@@ -160,5 +172,3 @@ function registrar_intento_login(string $email, bool $exito): void
     file_put_contents($archivo, json_encode($datos), LOCK_EX);
     usleep(min($datos['intentos'] * 250000, 1500000));
 }
-
-?>

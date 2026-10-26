@@ -1,20 +1,35 @@
 services:
   web-pnk:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        PHP_VERSION: ${PHP_VERSION:-8.5-apache}
+    restart: unless-stopped
     ports:
       - "80:80"
-    env_file:
-      - .env
+    environment:
+      MYSQL_HOST: db-prueba
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      ENFORCE_HTTPS: ${ENFORCE_HTTPS:-0}
     volumes:
       - ./pnkSecurity:/var/www/html
     depends_on:
       db-prueba:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost/index.php?id=1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   db-prueba:
     image: mysql:8.0
     command: --default-authentication-plugin=mysql_native_password
-    restart: always
+    restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       MYSQL_USER: ${MYSQL_USER}

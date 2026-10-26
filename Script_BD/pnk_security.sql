@@ -1,8 +1,9 @@
-﻿# Host: localhost  (Version 8.0.17)
+# Host: localhost  (Version 8.0.17)
 # Date: 2020-11-05 00:16:07
 # Generator: MySQL-Front 6.0  (Build 2.20)
 
-CREATE DATABASE `pnk_security` DEFAULT CHARACTER SET latin1 COLLATE latin1_spanish_ci;
+CREATE DATABASE IF NOT EXISTS `pnk_security` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE `pnk_security`;
 
 #
 # Structure for table "cartas"
@@ -167,4 +168,4 @@ CREATE TABLE `usuarios` (
 # Data for table "usuarios"
 #
 
-INSERT INTO `usuarios` VALUES (1,'Administrador','admin@gmail.com','admin01','1'),(2,'Alondra','alondra@gmail.com','alondra01','1');
+INSERT INTO `usuarios` VALUES (1,'Administrador','admin@gmail.com','$2y$10$tZz1Q3mF.PqmR1zZ7R6iuep7i6QnK5XjT6H2p8oB2vE6n3S9z1p6G','1'),(2,'Alondra','alondra@gmail.com','$2y$10$yB3hK7pQ.MnmR2zZ8R7jueq8j7QnL6XkU7I3q9pC3wF7n4T0a2q7H','1');

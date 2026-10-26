@@ -1,45 +1,50 @@
 <?php
+declare(strict_types=1);
 
-include("setup/setup.php");
+require_once __DIR__ . '/setup/setup.php';
 iniciar_sesion();
 
-if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) {
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    http_response_code(405);
+    exit('Método no permitido');
+}
+
+$token = (string) ($_POST['csrf_token'] ?? '');
+if ($token === '' || !hash_equals((string) ($_SESSION['csrf_token'] ?? ''), $token)) {
     http_response_code(403);
     exit("CSRF token validation failed");
 }
 
-switch($_POST['op'])
-{
-    case "1": insertar();
-        break;
-    case "2": eliminaritems();
-        break;
-    case "3": eliminartodo();
-        break;
-}
+$op = (string) ($_POST['op'] ?? '');
 
-function insertar()
+match ($op) {
+    '1' => insertar(),
+    '2' => eliminaritems(),
+    '3' => eliminartodo(),
+    default => (function (): void {
+        http_response_code(400);
+        exit('Operación inválida');
+    })(),
+};
+
+function insertar(): void
 {
     if (!isset($_SESSION['carrito']) || !is_array($_SESSION['carrito'])) {
         $_SESSION['carrito'] = [];
     }
 
-    // 1. Validar `iditems` como entero positivo
     $idItem = filter_input(INPUT_POST, 'iditems', FILTER_VALIDATE_INT);
-    if ($idItem === false || $idItem <= 0) {
+    if ($idItem === false || $idItem === null || $idItem <= 0) {
         http_response_code(400);
         exit("ID de ítem inválido.");
     }
 
-    // Validar que exista el ID del restaurante activo en la sesión (que se asigna en index.php)
     $idRestaurante = filter_var($_SESSION['id'] ?? 0, FILTER_VALIDATE_INT);
-    if ($idRestaurante <= 0) {
+    if (!$idRestaurante || $idRestaurante <= 0) {
         http_response_code(400);
         exit("No hay un restaurante activo.");
     }
-    
-    // 2, 3 y 4. Consultar items, categorias y cartas en una misma sentencia, 
-    // exigiendo visibilidad (visible = 1, eliminado IS NULL) y pertenencia al restaurante activo.
+
     $sql = 'SELECT items.id, items.nombre, items.precio 
             FROM items
             INNER JOIN categorias ON items.categorias_id = categorias.id
@@ -52,37 +57,34 @@ function insertar()
 
     $stmt = conectar()->prepare($sql);
     $stmt->execute([
-        ':id' => $idItem,
-        ':id_restaurante' => $idRestaurante
+        ':id'             => $idItem,
+        ':id_restaurante' => $idRestaurante,
     ]);
-    
-    $datos = $stmt->fetch(PDO::FETCH_ASSOC);
 
-    // 5. Comprobar que la consulta devolvió un producto válido antes de intentar usar sus columnas.
+    $datos = $stmt->fetch();
     if (!$datos) {
         http_response_code(404);
-        // Rechazar artículos ocultos, eliminados o de otro restaurante 
         exit("El producto no existe, no está disponible o no pertenece a este restaurante.");
     }
 
-    // Agregar el producto validado al carrito
-    $pos = count($_SESSION["carrito"]) + 1;
-    $productos = array(
-        "posicion" => $pos,
-        "id" => $datos['id'], 
-        "nombre" => $datos['nombre'],
-        "precio" => $datos['precio']
-    );
-    $_SESSION["carrito"][$pos] = $productos;
+    $idProd = (int) $datos['id'];
+    $_SESSION['carrito'][$idProd] = [
+        'posicion' => $idProd,
+        'id'       => $idProd,
+        'nombre'   => (string) $datos['nombre'],
+        'precio'   => (float) $datos['precio'],
+    ];
 }
 
-function eliminaritems()
+function eliminaritems(): void
 {
-    unset($_SESSION["carrito"][$_POST['pos']]);
+    $pos = filter_input(INPUT_POST, 'pos', FILTER_VALIDATE_INT);
+    if ($pos !== false && $pos !== null) {
+        unset($_SESSION['carrito'][$pos]);
+    }
 }
 
-function eliminartodo()
+function eliminartodo(): void
 {
-    unset($_SESSION['carrito']);
+    $_SESSION['carrito'] = [];
 }
-?>
