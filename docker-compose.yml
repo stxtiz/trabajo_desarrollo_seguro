@@ -1,69 +1,81 @@
 ﻿# =============================================================================
-# AMBIENTE 1: DESARROLLO (docker-compose.dev.yml)
-# Stack: Front-End (Node/Express ES2024) + Back-End (Node/Express MVC) + PostgreSQL 16
+# AMBIENTE 2: QA CON AGENTE DE IA (docker-compose.qa.yml)
+# Levanta PostgreSQL + Backend + Frontend y ejecuta el Agente de QA IA
+# conectado a GitHub Copilot / GitHub Models para auditar OWASP ASVS v5.0 Nivel 3
 # =============================================================================
 services:
-  db-dev:
+  db-qa:
     image: postgres:16-alpine
-    container_name: pnk-db-dev
-    restart: unless-stopped
+    container_name: pnk-db-qa
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-pnk_security}
-      POSTGRES_USER: ${POSTGRES_USER:-pnk_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pnk_dev_secret_2026}
-    ports:
-      - "127.0.0.1:5432:5432"
+      POSTGRES_DB: pnk_security_qa
+      POSTGRES_USER: pnk_qa_user
+      POSTGRES_PASSWORD: ${QA_POSTGRES_PASSWORD:-pnk_qa_secure_pass_2026}
     volumes:
       - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
-      - pgdata_dev:/var/lib/postgresql/data
+    networks:
+      - qa_internal_net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pnk_user} -d ${POSTGRES_DB:-pnk_security}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ["CMD-SHELL", "pg_isready -U pnk_qa_user -d pnk_security_qa"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
-  backend-dev:
+  backend-qa:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: pnk-backend-dev
-    restart: unless-stopped
+    container_name: pnk-backend-qa
     environment:
-      NODE_ENV: development
+      NODE_ENV: test
       BACKEND_PORT: 3000
-      POSTGRES_HOST: db-dev
+      POSTGRES_HOST: db-qa
       POSTGRES_PORT: 5432
-      POSTGRES_DB: ${POSTGRES_DB:-pnk_security}
-      POSTGRES_USER: ${POSTGRES_USER:-pnk_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pnk_dev_secret_2026}
-      CORS_ORIGIN: http://localhost:8080
+      POSTGRES_DB: pnk_security_qa
+      POSTGRES_USER: pnk_qa_user
+      POSTGRES_PASSWORD: ${QA_POSTGRES_PASSWORD:-pnk_qa_secure_pass_2026}
+      CORS_ORIGIN: http://frontend-qa:8080
       ENFORCE_HTTPS: "0"
-    ports:
-      - "127.0.0.1:3000:3000"
-    volumes:
-      - ./backend/src:/app/src:ro
     depends_on:
-      db-dev:
+      db-qa:
         condition: service_healthy
+    networks:
+      - qa_internal_net
 
-  frontend-dev:
+  frontend-qa:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: pnk-frontend-dev
-    restart: unless-stopped
+    container_name: pnk-frontend-qa
     environment:
-      NODE_ENV: development
+      NODE_ENV: test
       FRONTEND_PORT: 8080
-      BACKEND_URL: http://backend-dev:3000
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./frontend/public:/app/public:ro
-      - ./frontend/src:/app/src:ro
+      BACKEND_URL: http://backend-qa:3000
     depends_on:
-      - backend-dev
+      - backend-qa
+    networks:
+      - qa_internal_net
 
-volumes:
-  pgdata_dev:
+  qa-ai-agent:
+    build:
+      context: ./qa-ai
+      dockerfile: Dockerfile
+    container_name: pnk-qa-ai-agent
+    environment:
+      QA_FRONTEND_URL: http://frontend-qa:8080
+      QA_BACKEND_URL: http://backend-qa:3000
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_AI_MODEL: ${GITHUB_AI_MODEL:-gpt-4o-mini}
+      QA_TEST_ADMIN_PASSWORD: ${QA_TEST_ADMIN_PASSWORD:-AdminSegur0!2026#PNK}
+    volumes:
+      - ./qa-ai/reports:/app/reports
+    depends_on:
+      - frontend-qa
+      - backend-qa
+    networks:
+      - qa_internal_net
+
+networks:
+  qa_internal_net:
+    driver: bridge
 

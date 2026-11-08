@@ -1,0 +1,40 @@
+﻿name: Ambiente QA - Auditoria Automatizada con IA (GitHub Models ASVS 5.0 L3)
+
+on:
+  push:
+    branches:
+      - qa
+  pull_request:
+    branches:
+      - qa
+      - produccion
+
+permissions:
+  contents: read
+  models: read
+
+jobs:
+  qa_ai_testing:
+    name: "QA IA (GitHub Copilot Models) - OWASP ASVS 5.0 Nivel 3"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout rama QA
+        uses: actions/checkout@v4
+
+      - name: Ejecutar Contenedores QA y Agente de IA
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_AI_MODEL: "gpt-4o-mini"
+        run: |
+          docker compose up --build --abort-on-container-exit --exit-code-from qa-ai-agent
+
+      - name: Publicar Dictamen de la IA en GitHub Summary
+        if: always()
+        run: |
+          if [ -f qa-ai/reports/REPORTE_QA_IA_ASVS5.md ]; then
+            cat qa-ai/reports/REPORTE_QA_IA_ASVS5.md >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Limpiar entorno QA
+        if: always()
+        run: docker compose down -v
