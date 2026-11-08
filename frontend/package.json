@@ -1,0 +1,20 @@
+{
+  "name": "pnk-carta-digital-frontend",
+  "version": "2.0.0",
+  "description": "Frontend desacoplado para Carta Digital PNK Security - Node.js + Express + Vanilla ES2024 Fetch API (OWASP ASVS v5.0 Nivel 3)",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "compression": "^1.7.5",
+    "express": "^4.21.2",
+    "helmet": "^8.0.0",
+    "http-proxy-middleware": "^3.0.3"
+  }
+}

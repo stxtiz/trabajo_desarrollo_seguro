@@ -1,0 +1,100 @@
+name: Pipeline CI/CD - ASVS v5.0 L3 (Git -> QA IA Copilot -> Cloudflare Workers -> AWS EC2)
+
+on:
+  push:
+    branches:
+      - desarrollo
+      - qa
+      - produccion
+      - main
+  pull_request:
+    branches:
+      - qa
+      - produccion
+      - main
+
+# Permiso 'models: read' habilita el uso 100% gratuito de GitHub Models (IA de GitHub Copilot) con GITHUB_TOKEN
+permissions:
+  contents: read
+  models: read
+
+jobs:
+  # ===========================================================================
+  # ETAPA 1: AMBIENTE QA - AUDITORÍA Y TESTEO AUTOMATIZADO POR IA (GITHUB COPILOT/MODELS)
+  # ===========================================================================
+  qa_ai_testing:
+    name: "Ambiente QA: Testeo con IA (GitHub Models) & OWASP ASVS 5.0 L3"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout del código fuente
+        uses: actions/checkout@v4
+
+      - name: Levantar Ambiente QA en Docker (PostgreSQL + Backend MVC + Frontend) y ejecutar Agente IA
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_AI_MODEL: "gpt-4o-mini"
+        run: |
+          docker compose -f docker-compose.qa.yml up --build --abort-on-container-exit --exit-code-from qa-ai-agent
+
+      - name: Publicar Reporte de QA IA en el Resumen de GitHub Actions
+        if: always()
+        run: |
+          if [ -f qa-ai/reports/REPORTE_QA_IA_ASVS5.md ]; then
+            cat qa-ai/reports/REPORTE_QA_IA_ASVS5.md >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Subir Artefacto de Auditoría QA IA (OWASP ASVS v5.0 L3)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reporte-qa-ia-asvs5
+          path: qa-ai/reports/REPORTE_QA_IA_ASVS5.md
+
+      - name: Limpiar contenedores de QA
+        if: always()
+        run: docker compose -f docker-compose.qa.yml down -v
+
+  # ===========================================================================
+  # ETAPA 2: CLOUDFLARE (SUBDOMINIO FIJO GRATUITO *.workers.dev SIN DOMINIO PROPIO)
+  # ===========================================================================
+  deploy_cloudflare_worker:
+    name: "Cloudflare: Actualizar Proxy/WAF en *.workers.dev (Capa Gratuita)"
+    needs: qa_ai_testing
+    if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/produccion') && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout del código fuente
+        uses: actions/checkout@v4
+
+      - name: Desplegar Worker en Cloudflare (*.workers.dev)
+        if: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: cloudflare-worker
+          command: deploy --var EC2_ORIGIN_URL:http://${{ secrets.AWS_EC2_HOST }}
+
+  # ===========================================================================
+  # ETAPA 3: DESPLIEGUE FINAL EN AWS EC2 UBUNTU CON DOCKER (CAPA GRATUITA)
+  # ===========================================================================
+  deploy_aws_ec2:
+    name: "AWS EC2: Despliegue de Contenedores en Producción (Ubuntu Free Tier)"
+    needs: deploy_cloudflare_worker
+    if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/produccion') && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Desplegar contenedores en AWS EC2 Ubuntu vía SSH
+        uses: appleboy/ssh-action@v1.1.0
+        with:
+          host: ${{ secrets.AWS_EC2_HOST }}
+          username: ${{ secrets.AWS_EC2_USER }}
+          key: ${{ secrets.AWS_EC2_SSH_KEY }}
+          port: 22
+          script: |
+            set -e
+            cd /opt/carta-digital
+            git fetch origin main
+            git reset --hard origin/main
+            docker compose -f docker-compose.prod.yml up -d --build --remove-orphans
+            docker image prune -f

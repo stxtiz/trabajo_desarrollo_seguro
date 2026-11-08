@@ -1,0 +1,103 @@
+# =============================================================================
+# AMBIENTE 3: PRODUCCIÓN EN AWS EC2 UBUNTU FREE TIER (docker-compose.prod.yml)
+# Endurecimiento de Contenedores según OWASP ASVS v5.0 Nivel 3
+# Expone el puerto 80 hacia el Proxy de Cloudflare Workers (https://carta-digital.<tu-usuario>.workers.dev)
+# =============================================================================
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: pnk-db-prod
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-pnk_security}
+      POSTGRES_USER: ${POSTGRES_USER:-pnk_prod_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - pgdata_prod:/var/lib/postgresql/data
+    networks:
+      - backend_isolated_net
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 300M
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pnk_prod_user} -d ${POSTGRES_DB:-pnk_security}"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: pnk-backend-prod
+    restart: always
+    environment:
+      NODE_ENV: production
+      BACKEND_PORT: 3000
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-pnk_security}
+      POSTGRES_USER: ${POSTGRES_USER:-pnk_prod_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PASSWORD_PEPPER: ${PASSWORD_PEPPER}
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+      ENFORCE_HTTPS: ${ENFORCE_HTTPS:-1}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - backend_isolated_net
+      - edge_net
+    read_only: true
+    tmpfs:
+      - /tmp:size=32M,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: pnk-frontend-prod
+    restart: always
+    environment:
+      NODE_ENV: production
+      FRONTEND_PORT: 8080
+      BACKEND_URL: http://backend:3000
+    ports:
+      - "80:8080"
+    depends_on:
+      - backend
+    networks:
+      - edge_net
+    read_only: true
+    tmpfs:
+      - /tmp:size=16M,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 192M
+
+networks:
+  backend_isolated_net:
+    driver: bridge
+    internal: true
+  edge_net:
+    driver: bridge
+
+volumes:
+  pgdata_prod:
