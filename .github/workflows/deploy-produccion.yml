@@ -1,0 +1,46 @@
+﻿name: Ambiente Produccion - Publicacion Cloudflare + AWS EC2 (Docker)
+
+on:
+  push:
+    branches:
+      - produccion
+
+permissions:
+  contents: read
+
+jobs:
+  deploy_cloudflare_worker:
+    name: "1. Cloudflare: Actualizar Proxy/WAF en *.workers.dev"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout rama produccion
+        uses: actions/checkout@v4
+
+      - name: Desplegar Worker en Cloudflare (*.workers.dev)
+        if: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: cloudflare-worker
+          command: deploy --var EC2_ORIGIN_URL:http://${{ secrets.AWS_EC2_HOST }}
+
+  deploy_aws_ec2:
+    name: "2. AWS EC2: Desplegar Contenedores en Ubuntu con Docker"
+    needs: deploy_cloudflare_worker
+    runs-on: ubuntu-latest
+    steps:
+      - name: Desplegar en AWS EC2 Ubuntu via SSH
+        uses: appleboy/ssh-action@v1.1.0
+        with:
+          host: ${{ secrets.AWS_EC2_HOST }}
+          username: ${{ secrets.AWS_EC2_USER }}
+          key: ${{ secrets.AWS_EC2_SSH_KEY }}
+          port: 22
+          script: |
+            set -e
+            cd /opt/carta-digital
+            git fetch origin produccion
+            git reset --hard origin/produccion
+            docker compose up -d --build --remove-orphans
+            docker image prune -f

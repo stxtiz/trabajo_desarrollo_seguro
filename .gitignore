@@ -1,4 +1,4 @@
-node_modules/
+﻿node_modules/
 .env
 .env.*
 !.env.example
@@ -7,3 +7,5 @@ logs/
 .DS_Store
 qa-ai/reports/*.md
 !qa-ai/reports/.gitkeep
+*.md
+
