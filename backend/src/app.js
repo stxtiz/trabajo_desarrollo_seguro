@@ -59,15 +59,47 @@ app.use((req, res, next) => {
   next();
 });
 
-// 3. CORS estricto con credenciales
-const allowedOrigins = env.CORS_ORIGIN.split(',').map((o) => o.trim()).filter(Boolean);
+// 3. CORS estricto con credenciales (OWASP ASVS v5.0 V14.4 Nivel 3)
+const rawAllowedOrigins = (env.CORS_ORIGIN || '').split(',').map((o) => o.trim().replace(/\/+$/, '')).filter(Boolean);
+
+function isAllowedOrigin(origin) {
+  if (!origin) return true;
+  const cleanOrigin = origin.trim().replace(/\/+$/, '');
+
+  // Permitir comodín global o coincidencia directa configurada en CORS_ORIGIN
+  if (rawAllowedOrigins.includes('*') || rawAllowedOrigins.includes(cleanOrigin)) {
+    return true;
+  }
+
+  try {
+    const parsed = new URL(cleanOrigin);
+    // Permitir cualquier subdominio de Cloudflare Workers (*.workers.dev)
+    if (parsed.hostname.endsWith('.workers.dev')) {
+      return true;
+    }
+    // Permitir dominios comodín sslip.io usados para IP pública de AWS EC2
+    if (parsed.hostname.endsWith('.sslip.io')) {
+      return true;
+    }
+    // Permitir localhost / desarrollo local
+    if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
+      return true;
+    }
+  } catch {
+    return false;
+  }
+
+  return false;
+}
+
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+      if (isAllowedOrigin(origin)) {
         return callback(null, true);
       }
-      return callback(new Error('CORS origin not allowed'));
+      logger.warn('CORS_ORIGIN_REJECTED', { origin });
+      return callback(null, false);
     },
     credentials: true,
     methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],

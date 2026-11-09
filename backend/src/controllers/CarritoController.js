@@ -68,7 +68,21 @@ class CarritoController {
         );
       }
 
-      const carritoActual = { ...(req.session?.carrito || {}) };
+      if (!req.session || !req.session.sid) {
+        return JsonView.error(res, 'Sesión inválida o expirada.', 401, 'SESSION_EXPIRED');
+      }
+
+      let carritoActual = {};
+      if (typeof req.session.carrito === 'object' && req.session.carrito !== null) {
+        carritoActual = { ...req.session.carrito };
+      } else if (typeof req.session.carrito === 'string') {
+        try {
+          carritoActual = JSON.parse(req.session.carrito);
+        } catch {
+          carritoActual = {};
+        }
+      }
+
       const idProd = Number(itemValido.id);
       const itemToken = encodeRef('item', idProd);
 
@@ -83,6 +97,7 @@ class CarritoController {
         precio: Number(itemValido.precio)
       };
 
+      req.session.carrito = carritoActual;
       await SesionModel.actualizarCarrito(req.session.sid, carritoActual);
 
       return JsonView.success(res, {
@@ -109,9 +124,23 @@ class CarritoController {
         return JsonView.error(res, 'Token de producto inválido.', 400, 'INVALID_ITEM_TOKEN');
       }
 
-      const carritoActual = { ...(req.session?.carrito || {}) };
-      delete carritoActual[idItem];
+      if (!req.session || !req.session.sid) {
+        return JsonView.error(res, 'Sesión inválida o expirada.', 401, 'SESSION_EXPIRED');
+      }
 
+      let carritoActual = {};
+      if (typeof req.session.carrito === 'object' && req.session.carrito !== null) {
+        carritoActual = { ...req.session.carrito };
+      } else if (typeof req.session.carrito === 'string') {
+        try {
+          carritoActual = JSON.parse(req.session.carrito);
+        } catch {
+          carritoActual = {};
+        }
+      }
+
+      delete carritoActual[idItem];
+      req.session.carrito = carritoActual;
       await SesionModel.actualizarCarrito(req.session.sid, carritoActual);
 
       return JsonView.success(res, {
@@ -128,7 +157,10 @@ class CarritoController {
    */
   static async vaciarCarrito(req, res, next) {
     try {
-      await SesionModel.actualizarCarrito(req.session.sid, {});
+      if (req.session?.sid) {
+        req.session.carrito = {};
+        await SesionModel.actualizarCarrito(req.session.sid, {});
+      }
       await AuditoriaModel.registrar({
         evento: 'CART_CLEARED',
         severidad: 'INFO',

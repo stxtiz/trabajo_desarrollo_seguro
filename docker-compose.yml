@@ -1,4 +1,4 @@
-﻿# =============================================================================
+# =============================================================================
 # AMBIENTE 1: DESARROLLO (docker-compose.dev.yml)
 # Stack: Front-End (Node/Express ES2024) + Back-End (Node/Express MVC) + PostgreSQL 16
 # =============================================================================
@@ -36,7 +36,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-pnk_security}
       POSTGRES_USER: ${POSTGRES_USER:-pnk_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pnk_dev_secret_2026}
-      CORS_ORIGIN: http://localhost:8080
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080}
       ENFORCE_HTTPS: "0"
     ports:
       - "127.0.0.1:3000:3000"
