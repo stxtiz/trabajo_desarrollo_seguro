@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - desarrollo
+  workflow_dispatch:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   validate_and_promote_to_qa:
@@ -18,7 +20,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GH_PAT || secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Verificar sintaxis JS en Backend y Frontend
         run: |
@@ -27,6 +29,7 @@ jobs:
           node --check frontend/src/server.js
 
       - name: Promover codigo de Desarrollo hacia la rama QA (manteniendo qa-ai intacto)
+        id: promote
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -36,6 +39,22 @@ jobs:
           if ! git diff --cached --quiet; then
             git commit -m "chore(gitflow): promover cambios desde desarrollo hacia qa para auditoria IA"
             git push origin qa
+            echo "promoted=true" >> $GITHUB_OUTPUT
+            echo "Cambios promovidos exitosamente a la rama qa."
           else
+            echo "promoted=false" >> $GITHUB_OUTPUT
             echo "La rama qa ya tiene los ultimos cambios de desarrollo."
+          fi
+
+      - name: Disparar Workflow de QA con IA
+        if: steps.promote.outputs.promoted == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT || secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
+          HAS_PAT: ${{ secrets.GH_PAT || secrets.PAT_TOKEN }}
+        run: |
+          if [ -n "$HAS_PAT" ]; then
+            echo "Push realizado con PAT. GitHub Actions disparara automaticamente qa-ai.yml."
+          else
+            echo "Disparando workflow qa-ai.yml en la rama qa via GitHub CLI..."
+            gh workflow run qa-ai.yml --ref qa || echo "Aviso: workflow_dispatch enviado o pendiente."
           fi

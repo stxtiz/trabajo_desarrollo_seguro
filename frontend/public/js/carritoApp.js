@@ -1,6 +1,6 @@
 /**
  * Controlador Front-End de Productos Seleccionados (Carrito) - ES2024+
- * - Reemplaza completamente jQuery y $.ajax por Fetch API nativa manteniendo la interfaz idéntica.
+ * - Implementado con Fetch API nativa manteniendo la interfaz idéntica.
  * - URL e identificadores 100% ofuscados (/carrito y tokens criptográficos itemToken, sin ?keyid= ni id=).
  */
 import { apiFetch, enforceObfuscatedUrl, formatMonedaChilena } from './apiClient.js';
