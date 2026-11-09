@@ -1,6 +1,6 @@
 /**
  * Controlador Front-End de la Carta Digital (ES2024+)
- * - Diseño visual 100% idéntico al original sin jQuery ni $.ajax.
+ * - Diseño visual 100% idéntico al original usando Fetch API nativa y ES Modules.
  * - URL e identificadores 100% ofuscados (nunca expone ?id=, ?keyid= ni IDs numéricos en URL o DOM).
  * - Protección total contra DOM-XSS mediante uso estricto de textContent y nodos DOM seguros (OWASP ASVS v5.0 V5.3).
  */
