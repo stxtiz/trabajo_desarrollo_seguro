@@ -1,6 +1,6 @@
 /**
  * Cliente HTTP moderno basado en Fetch API nativa (ES2024+)
- * Sin jQuery, sin XMLHttpRequest/$.ajax deprecado.
+ * Sin librerías legacy ni llamadas XMLHttpRequest deprecadas.
  * Cumple OWASP ASVS v5.0 Nivel 3 (CSRF Synchronizer Token + Ofuscación de URL sin exponer IDs)
  */
 

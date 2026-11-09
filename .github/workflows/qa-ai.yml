@@ -4,19 +4,16 @@ on:
   push:
     branches:
       - qa
-  workflow_run:
-    workflows: ["1. Ambiente Desarrollo - Validacion y GitFlow hacia QA"]
-    types:
-      - completed
+  workflow_dispatch:
 
 permissions:
   contents: write
+  actions: write
   models: read
 
 jobs:
   qa_ai_testing:
     name: "QA IA (GitHub Copilot Models) - Auditoria OWASP ASVS 5.0 L3"
-    if: github.event_name == 'push' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     environment: qa
     steps:
@@ -25,12 +22,22 @@ jobs:
         with:
           ref: qa
 
+      - name: Preparar directorio de reportes QA con permisos para contenedor non-root (UID 1000)
+        run: |
+          mkdir -p qa-ai/reports
+          chmod -R 777 qa-ai/reports
+
       - name: Levantar Contenedores QA y Ejecutar Agente de IA
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_AI_MODEL: "gpt-4o-mini"
         run: |
           docker compose up --build --abort-on-container-exit --exit-code-from qa-ai-agent
+
+      - name: Mostrar logs de diagnostico si algun contenedor fallo
+        if: failure()
+        run: |
+          docker compose logs --no-color
 
       - name: Publicar Dictamen de la IA en GitHub Summary
         if: always()
@@ -45,6 +52,7 @@ jobs:
         with:
           name: reporte-qa-ia-asvs5
           path: qa-ai/reports/REPORTE_QA_IA_ASVS5.md
+          if-no-files-found: ignore
 
       - name: Limpiar Contenedores QA
         if: always()
@@ -53,16 +61,16 @@ jobs:
   promote_to_produccion:
     name: "QA Aprobado por IA -> Promocion Automatica a Produccion"
     needs: qa_ai_testing
-    if: success()
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repositorio completo
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GH_PAT || secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Promover codigo aprobado por IA hacia la rama Produccion (sin carpeta qa-ai)
+        id: promote
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -72,6 +80,22 @@ jobs:
           if ! git diff --cached --quiet; then
             git commit -m "chore(release): codigo auditado y aprobado por IA en QA promovido a produccion"
             git push origin produccion
+            echo "promoted=true" >> $GITHUB_OUTPUT
+            echo "Codigo promovido exitosamente a la rama produccion."
           else
+            echo "promoted=false" >> $GITHUB_OUTPUT
             echo "La rama produccion ya esta sincronizada con el codigo aprobado en qa."
+          fi
+
+      - name: Disparar Workflow de Despliegue en Produccion
+        if: steps.promote.outputs.promoted == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT || secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
+          HAS_PAT: ${{ secrets.GH_PAT || secrets.PAT_TOKEN }}
+        run: |
+          if [ -n "$HAS_PAT" ]; then
+            echo "Push realizado con PAT. GitHub Actions disparara automaticamente deploy-produccion.yml."
+          else
+            echo "Disparando workflow deploy-produccion.yml en la rama produccion via GitHub CLI..."
+            gh workflow run deploy-produccion.yml --ref produccion || echo "Aviso: workflow_dispatch enviado o pendiente."
           fi
