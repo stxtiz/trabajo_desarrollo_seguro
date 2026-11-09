@@ -1,0 +1,41 @@
+name: 1. Ambiente Desarrollo - Validacion y GitFlow hacia QA
+
+on:
+  push:
+    branches:
+      - desarrollo
+
+permissions:
+  contents: write
+
+jobs:
+  validate_and_promote_to_qa:
+    name: "Desarrollo -> Promocion Automatica a QA"
+    runs-on: ubuntu-latest
+    environment: desarrollo
+    steps:
+      - name: Checkout repositorio completo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verificar sintaxis JS en Backend y Frontend
+        run: |
+          node --check backend/src/server.js
+          node --check backend/src/app.js
+          node --check frontend/src/server.js
+
+      - name: Promover codigo de Desarrollo hacia la rama QA (manteniendo qa-ai intacto)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin qa:qa
+          git checkout qa
+          git checkout origin/desarrollo -- frontend backend database .env.example .gitignore
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(gitflow): promover cambios desde desarrollo hacia qa para auditoria IA"
+            git push origin qa
+          else
+            echo "La rama qa ya tiene los ultimos cambios de desarrollo."
+          fi

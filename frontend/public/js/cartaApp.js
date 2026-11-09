@@ -367,8 +367,8 @@ function renderDestacados(destacados) {
             ? '0 0 calc(50% - 15px)'
             : '0 0 100%';
     }
-    const stepPercent = 100 / visibleCount;
-    stage.style.transform = `translate3d(-${currentIndex * stepPercent}%, 0px, 0px)`;
+    const offsetPx = itemNodes[currentIndex]?.offsetLeft || 0;
+    stage.style.transform = `translate3d(-${offsetPx}px, 0px, 0px)`;
   }
 
   btnPrev.addEventListener('click', () => {
@@ -401,19 +401,20 @@ function renderCartasYCategorias(cartas) {
   const tabPanes = [];
 
   cartas.forEach((carta, index) => {
+    const slug = String(carta.nombre || '').toLowerCase().replace(/[^a-z0-9_-]/g, '-') || `carta-${index}`;
     const link = document.createElement('a');
     link.className = `nav-item nav-link${index === 0 ? ' active' : ''}`;
-    link.id = `nav-${carta.nombre}-tab`;
-    link.href = `#${carta.nombre}`;
+    link.id = `nav-${slug}-tab`;
+    link.href = `#${slug}`;
     link.setAttribute('role', 'tab');
     link.setAttribute('aria-selected', index === 0 ? 'true' : 'false');
     link.textContent = carta.nombre;
 
     const pane = document.createElement('div');
     pane.className = `tab-pane fade${index === 0 ? ' show active' : ''}`;
-    pane.id = carta.nombre;
+    pane.id = slug;
     pane.setAttribute('role', 'tabpanel');
-    pane.setAttribute('aria-labelledby', `nav-${carta.nombre}-tab`);
+    pane.setAttribute('aria-labelledby', `nav-${slug}-tab`);
 
     link.addEventListener('click', (ev) => {
       ev.preventDefault();
@@ -642,6 +643,15 @@ async function inicializarCarta() {
   if (closeModalBtn) {
     closeModalBtn.addEventListener('click', cerrarModalSeleccion);
   }
+  const modalEl = document.getElementById('myModal');
+  if (modalEl) {
+    modalEl.addEventListener('click', (ev) => {
+      if (ev.target === modalEl) cerrarModalSeleccion();
+    });
+  }
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape') cerrarModalSeleccion();
+  });
 
   async function cargarDatos() {
     try {
