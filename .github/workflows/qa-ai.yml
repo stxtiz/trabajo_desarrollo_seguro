@@ -1,27 +1,31 @@
-﻿name: Ambiente QA - Auditoria Automatizada con IA (GitHub Models ASVS 5.0 L3)
+name: 2. Ambiente QA - Testeo con IA (GitHub Models) y GitFlow hacia Produccion
 
 on:
   push:
     branches:
       - qa
-  pull_request:
-    branches:
-      - qa
-      - produccion
+  workflow_run:
+    workflows: ["1. Ambiente Desarrollo - Validacion y GitFlow hacia QA"]
+    types:
+      - completed
 
 permissions:
-  contents: read
+  contents: write
   models: read
 
 jobs:
   qa_ai_testing:
-    name: "QA IA (GitHub Copilot Models) - OWASP ASVS 5.0 Nivel 3"
+    name: "QA IA (GitHub Copilot Models) - Auditoria OWASP ASVS 5.0 L3"
+    if: github.event_name == 'push' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+    environment: qa
     steps:
       - name: Checkout rama QA
         uses: actions/checkout@v4
+        with:
+          ref: qa
 
-      - name: Ejecutar Contenedores QA y Agente de IA
+      - name: Levantar Contenedores QA y Ejecutar Agente de IA
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_AI_MODEL: "gpt-4o-mini"
@@ -35,6 +39,39 @@ jobs:
             cat qa-ai/reports/REPORTE_QA_IA_ASVS5.md >> $GITHUB_STEP_SUMMARY
           fi
 
-      - name: Limpiar entorno QA
+      - name: Subir Artefacto de Reporte QA IA
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reporte-qa-ia-asvs5
+          path: qa-ai/reports/REPORTE_QA_IA_ASVS5.md
+
+      - name: Limpiar Contenedores QA
         if: always()
         run: docker compose down -v
+
+  promote_to_produccion:
+    name: "QA Aprobado por IA -> Promocion Automatica a Produccion"
+    needs: qa_ai_testing
+    if: success()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repositorio completo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promover codigo aprobado por IA hacia la rama Produccion (sin carpeta qa-ai)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin produccion:produccion
+          git checkout produccion
+          git checkout origin/qa -- frontend backend database .env.example .gitignore
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(release): codigo auditado y aprobado por IA en QA promovido a produccion"
+            git push origin produccion
+          else
+            echo "La rama produccion ya esta sincronizada con el codigo aprobado en qa."
+          fi
