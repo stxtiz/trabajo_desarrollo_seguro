@@ -33,45 +33,13 @@ function safeCompare(a, b) {
 }
 
 /**
- * Ofuscación Criptográfica Autenticada (AES-256-CTR + HMAC-SHA256 truncado, Base64URL)
+ * Ofuscación Criptográfica Autenticada O(1) (AES-256-CTR + HMAC-SHA256 truncado a 10 bytes, Base64URL)
  * Evita exponer IDs secuenciales de base de datos (id=1, keyid=1, etc.) en URLs, DOM y API (Anti-IDOR OWASP ASVS v5.0 V4.2.1)
  */
 function getObfuscationKey() {
   return crypto.createHash('sha256').update(`pnk-asvs5-url-obfuscator:${env.PASSWORD_PEPPER}`).digest();
 }
 
-function obfuscateId(scope, numericId) {
-  const idNum = Number.parseInt(String(numericId), 10);
-  if (!Number.isSafeInteger(idNum) || idNum <= 0) return '';
-  const key = getObfuscationKey();
-  const payload = `${scope}:${idNum}`;
-  // IV determinista derivado por HMAC para que el mismo recurso tenga un token opaco consistente sin revelar el entero
-  const iv = crypto.createHmac('sha256', key).update(`iv:${payload}`).digest().subarray(0, 16);
-  const cipher = crypto.createCipheriv('aes-256-ctr', key, iv);
-  const encrypted = Buffer.concat([cipher.update(payload, 'utf8'), cipher.final()]);
-  const tag = crypto.createHmac('sha256', key).update(Buffer.concat([iv, encrypted])).digest().subarray(0, 8);
-  return Buffer.concat([iv.subarray(0, 8), encrypted, tag]).toString('base64url');
-}
-
-function deobfuscateId(scope, token) {
-  if (!token || typeof token !== 'string') return null;
-  // Rechazar enteros crudos cuando se exige token ofuscado o intentar decodificar Base64URL
-  try {
-    const raw = Buffer.from(token, 'base64url');
-    if (raw.length < 18) return null;
-    const key = getObfuscationKey();
-    // Verificación por búsqueda rápida de IDs válidos (1..10000) o desencriptación directa
-    // Como usamos primeros 8 bytes del IV determinista, reconstruimos o validamos por tabla/rango:
-    // Para desencriptación directa en O(1) usamos IV de 16 bytes derivado de los primeros 8 bytes repetidos:
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Versión O(1) reversible con AES-256-GCM / CTR + HMAC (IV de 12 bytes + ciphertext + 8 bytes HMAC)
- */
 function encodeRef(scope, numericId) {
   const idNum = Number.parseInt(String(numericId), 10);
   if (!Number.isSafeInteger(idNum) || idNum <= 0) return '';

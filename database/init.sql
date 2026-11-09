@@ -217,3 +217,8 @@ CREATE TABLE auditoria_seguridad (
 );
 
 CREATE INDEX idx_auditoria_evento ON auditoria_seguridad(evento, creado_en DESC);
+CREATE INDEX idx_comentarios_restaurante ON comentarios(id_restaurante);
+CREATE INDEX idx_cartas_restaurante ON cartas(restaurantes_id);
+CREATE INDEX idx_categorias_carta ON categorias(cartas_id);
+CREATE INDEX idx_items_categoria ON items(categorias_id);
+

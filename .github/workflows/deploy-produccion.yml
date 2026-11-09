@@ -1,9 +1,13 @@
-﻿name: Ambiente Produccion - Publicacion Cloudflare + AWS EC2 (Docker)
+name: 3. Ambiente Produccion - Despliegue Cloudflare + AWS EC2 (Docker)
 
 on:
   push:
     branches:
       - produccion
+  workflow_run:
+    workflows: ["2. Ambiente QA - Testeo con IA (GitHub Models) y GitFlow hacia Produccion"]
+    types:
+      - completed
 
 permissions:
   contents: read
@@ -11,10 +15,14 @@ permissions:
 jobs:
   deploy_cloudflare_worker:
     name: "1. Cloudflare: Actualizar Proxy/WAF en *.workers.dev"
+    if: github.event_name == 'push' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+    environment: produccion
     steps:
       - name: Checkout rama produccion
         uses: actions/checkout@v4
+        with:
+          ref: produccion
 
       - name: Desplegar Worker en Cloudflare (*.workers.dev)
         if: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
@@ -23,12 +31,14 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: cloudflare-worker
-          command: deploy --var EC2_ORIGIN_URL:http://${{ secrets.AWS_EC2_HOST }}
+          command: deploy
 
   deploy_aws_ec2:
     name: "2. AWS EC2: Desplegar Contenedores en Ubuntu con Docker"
     needs: deploy_cloudflare_worker
+    if: success() && secrets.AWS_EC2_HOST != ''
     runs-on: ubuntu-latest
+    environment: produccion
     steps:
       - name: Desplegar en AWS EC2 Ubuntu via SSH
         uses: appleboy/ssh-action@v1.1.0

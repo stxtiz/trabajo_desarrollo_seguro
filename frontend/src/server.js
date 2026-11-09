@@ -60,6 +60,11 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Bloquear acceso externo a endpoints internos del Backend (/api/internal/*) (ASVS v5.0 V4.1)
+app.use('/api/internal', (req, res) => {
+  res.status(403).json({ ok: false, error: { code: 'FORBIDDEN_INTERNAL_ROUTE', message: 'Ruta interna restringida.' } });
+});
+
 // Proxy reverso hacia el contenedor Back-End (/api -> BACKEND_URL/api)
 app.use(
   '/api',
