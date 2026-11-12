@@ -83,5 +83,5 @@ jobs:
             fi
             git fetch origin produccion
             git reset --hard origin/produccion
-            docker compose up -d --build --remove-orphans
+            docker compose -f docker-compose.rds.yml up -d --build --remove-orphans
             docker image prune -f
