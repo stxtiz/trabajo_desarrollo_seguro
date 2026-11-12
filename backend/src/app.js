@@ -18,7 +18,7 @@ const app = express();
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
 
-// 1. Trazabilidad de petición (Correlation / Request ID - OWASP ASVS v5.0 V7)
+// 1. Trazabilidad de petici├│n (Correlation / Request ID - OWASP ASVS v5.0 V7)
 app.use((req, res, next) => {
   const incomingId = req.headers['x-request-id'];
   const requestId = (typeof incomingId === 'string' && /^[a-zA-Z0-9-]{8,64}$/.test(incomingId))
@@ -66,7 +66,7 @@ function isAllowedOrigin(origin) {
   if (!origin) return true;
   const cleanOrigin = origin.trim().replace(/\/+$/, '');
 
-  // Permitir comodín global o coincidencia directa configurada en CORS_ORIGIN
+  // Permitir comod├¡n global o coincidencia directa configurada en CORS_ORIGIN
   if (rawAllowedOrigins.includes('*') || rawAllowedOrigins.includes(cleanOrigin)) {
     return true;
   }
@@ -77,7 +77,7 @@ function isAllowedOrigin(origin) {
     if (parsed.hostname.endsWith('.workers.dev')) {
       return true;
     }
-    // Permitir dominios comodín sslip.io usados para IP pública de AWS EC2
+    // Permitir dominios comod├¡n sslip.io usados para IP p├║blica de AWS EC2
     if (parsed.hostname.endsWith('.sslip.io')) {
       return true;
     }
@@ -110,7 +110,7 @@ app.use(
 // 4. Rate Limiting global de API
 app.use('/api', apiLimiter);
 
-// 5. Parsers con límites estrictos de tamaño para mitigar ataques de denegación de servicio (ASVS v5.0 V12 / V13)
+// 5. Parsers con l├¡mites estrictos de tama├▒o para mitigar ataques de denegaci├│n de servicio (ASVS v5.0 V12 / V13)
 app.use(cookieParser());
 app.use(express.json({ limit: '16kb', strict: true }));
 app.use(express.urlencoded({ extended: false, limit: '16kb', parameterLimit: 20 }));
@@ -119,18 +119,18 @@ app.use(compression());
 // 6. Rutas de API
 app.use('/api', apiRoutes);
 
-// 7. Manejador 404 canónico
+// 7. Manejador 404 can├│nico
 app.use((req, res) => {
   return JsonView.error(res, 'Recurso de API no encontrado.', 404, 'NOT_FOUND');
 });
 
-// 8. Manejador Global de Errores sin filtración de trazas internas (OWASP ASVS v5.0 V7.4)
+// 8. Manejador Global de Errores sin filtraci├│n de trazas internas (OWASP ASVS v5.0 V7.4)
 app.use((err, req, res, _next) => {
   if (err.type === 'entity.too.large') {
-    return JsonView.error(res, 'El tamaño de la petición excede el límite permitido (16KB).', 413, 'PAYLOAD_TOO_LARGE');
+    return JsonView.error(res, 'El tama├▒o de la petici├│n excede el l├¡mite permitido (16KB).', 413, 'PAYLOAD_TOO_LARGE');
   }
   if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
-    return JsonView.error(res, 'Formato JSON inválido en el cuerpo de la petición.', 400, 'INVALID_JSON');
+    return JsonView.error(res, 'Formato JSON inv├ílido en el cuerpo de la petici├│n.', 400, 'INVALID_JSON');
   }
 
   logger.error('UNHANDLED_API_ERROR', {
