@@ -1,8 +1,21 @@
 'use strict';
 
+const fs = require('fs');
 const { Pool } = require('pg');
 const env = require('./env');
 const logger = require('./logger');
+
+function buildSslConfig() {
+  if (!env.PG_SSL) {
+    return false;
+  }
+
+  const sslConfig = { rejectUnauthorized: true };
+  if (env.PG_SSL_CA) {
+    sslConfig.ca = fs.readFileSync(env.PG_SSL_CA, 'utf8');
+  }
+  return sslConfig;
+}
 
 const pool = new Pool({
   host: env.PG_HOST,
@@ -10,7 +23,7 @@ const pool = new Pool({
   database: env.PG_DATABASE,
   user: env.PG_USER,
   password: env.PG_PASSWORD,
-  ssl: env.PG_SSL ? { rejectUnauthorized: true } : false,
+  ssl: buildSslConfig(),
   max: 15,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,

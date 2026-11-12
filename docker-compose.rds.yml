@@ -1,0 +1,53 @@
+# =============================================================================
+# AMBIENTE PRODUCCIÓN CON AMAZON RDS (POSTGRESQL 16+)
+# Uso: docker compose -f docker-compose.rds.yml up -d --build
+# Estándar de Seguridad: OWASP ASVS v5.0 Nivel 3
+# =============================================================================
+services:
+  backend-prod:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: pnk-backend-prod
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      BACKEND_PORT: 3000
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-pnk_security}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_SSL: ${POSTGRES_SSL:-true}
+      POSTGRES_SSL_CA: ${POSTGRES_SSL_CA:-/app/certs/rds-global-bundle.pem}
+      PASSWORD_PEPPER: ${PASSWORD_PEPPER}
+      SESSION_IDLE_TIMEOUT_SEC: ${SESSION_IDLE_TIMEOUT_SEC:-900}
+      SESSION_ABSOLUTE_TIMEOUT_SEC: ${SESSION_ABSOLUTE_TIMEOUT_SEC:-14400}
+      CORS_ORIGIN: ${CORS_ORIGIN}
+      ENFORCE_HTTPS: ${ENFORCE_HTTPS:-1}
+    volumes:
+      - ./certs/rds-global-bundle.pem:/app/certs/rds-global-bundle.pem:ro
+    networks:
+      - edge_net
+
+  frontend-prod:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: pnk-frontend-prod
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      FRONTEND_PORT: 8080
+      BACKEND_URL: http://backend-prod:3000
+    ports:
+      - "80:8080"
+    depends_on:
+      backend-prod:
+        condition: service_healthy
+    networks:
+      - edge_net
+
+networks:
+  edge_net:
+    driver: bridge

@@ -15,6 +15,7 @@ const env = Object.freeze({
   PG_USER: process.env.POSTGRES_USER || 'pnk_user',
   PG_PASSWORD: process.env.POSTGRES_PASSWORD || '',
   PG_SSL: process.env.POSTGRES_SSL === 'true',
+  PG_SSL_CA: process.env.POSTGRES_SSL_CA || '',
   SESSION_COOKIE_NAME: IS_PROD ? '__Host-pnk_sid' : 'pnk_sid',
   SESSION_IDLE_TIMEOUT_SEC: Number.parseInt(process.env.SESSION_IDLE_TIMEOUT_SEC || '900', 10), // 15 min (ASVS v5.0 L3 V3.3)
   SESSION_ABSOLUTE_TIMEOUT_SEC: Number.parseInt(process.env.SESSION_ABSOLUTE_TIMEOUT_SEC || '14400', 10), // 4 horas (ASVS v5.0 L3 V3.3)
