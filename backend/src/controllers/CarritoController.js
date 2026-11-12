@@ -10,7 +10,7 @@ const { encodeRef } = require('../utils/cryptoUtils');
 class CarritoController {
   /**
    * GET /api/v1/carrito
-   * Retorna los datos del restaurante activo en la sesión y los productos del carrito con referencias ofuscadas
+   * Retorna los datos del restaurante activo en la sesi├│n y los productos del carrito con referencias ofuscadas
    */
   static async obtenerCarrito(req, res, next) {
     try {
@@ -47,7 +47,7 @@ class CarritoController {
 
   /**
    * POST /api/v1/carrito/items
-   * Recibe un itemToken criptográfico ofuscado (nunca un id numérico en claro), lo desencripta y valida en PostgreSQL
+   * Recibe un itemToken criptogr├ífico ofuscado (nunca un id num├®rico en claro), lo desencripta y valida en PostgreSQL
    */
   static async agregarItem(req, res, next) {
     try {
@@ -55,21 +55,21 @@ class CarritoController {
       const idRestaurante = req.restauranteId;
 
       if (!idItem) {
-        return JsonView.error(res, 'Token de producto inválido o manipulado.', 400, 'INVALID_ITEM_TOKEN');
+        return JsonView.error(res, 'Token de producto inv├ílido o manipulado.', 400, 'INVALID_ITEM_TOKEN');
       }
 
       const itemValido = await RestauranteModel.obtenerItemValidoDeRestaurante(idItem, idRestaurante);
       if (!itemValido) {
         return JsonView.error(
           res,
-          'El producto no existe, no está disponible o no pertenece a este restaurante.',
+          'El producto no existe, no est├í disponible o no pertenece a este restaurante.',
           404,
           'ITEM_NOT_AVAILABLE'
         );
       }
 
       if (!req.session || !req.session.sid) {
-        return JsonView.error(res, 'Sesión inválida o expirada.', 401, 'SESSION_EXPIRED');
+        return JsonView.error(res, 'Sesi├│n inv├ílida o expirada.', 401, 'SESSION_EXPIRED');
       }
 
       let carritoActual = {};
@@ -87,7 +87,7 @@ class CarritoController {
       const itemToken = encodeRef('item', idProd);
 
       if (Object.keys(carritoActual).length >= 50 && !carritoActual[idProd]) {
-        return JsonView.error(res, 'El carrito ha alcanzado el límite máximo de productos.', 400, 'CART_LIMIT_REACHED');
+        return JsonView.error(res, 'El carrito ha alcanzado el l├¡mite m├íximo de productos.', 400, 'CART_LIMIT_REACHED');
       }
 
       carritoActual[idProd] = {
@@ -121,11 +121,11 @@ class CarritoController {
     try {
       const idItem = resolveItemRef(req.params.itemToken || req.body?.itemToken);
       if (!idItem) {
-        return JsonView.error(res, 'Token de producto inválido.', 400, 'INVALID_ITEM_TOKEN');
+        return JsonView.error(res, 'Token de producto inv├ílido.', 400, 'INVALID_ITEM_TOKEN');
       }
 
       if (!req.session || !req.session.sid) {
-        return JsonView.error(res, 'Sesión inválida o expirada.', 401, 'SESSION_EXPIRED');
+        return JsonView.error(res, 'Sesi├│n inv├ílida o expirada.', 401, 'SESSION_EXPIRED');
       }
 
       let carritoActual = {};
@@ -153,7 +153,7 @@ class CarritoController {
 
   /**
    * DELETE /api/v1/carrito
-   * Vacía todos los productos del carrito de la sesión actual
+   * Vac├¡a todos los productos del carrito de la sesi├│n actual
    */
   static async vaciarCarrito(req, res, next) {
     try {
