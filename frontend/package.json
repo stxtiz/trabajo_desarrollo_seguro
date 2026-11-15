@@ -12,7 +12,7 @@
     "dev": "node --watch src/server.js"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=24.0.0"
   },
   "dependencies": {
     "compression": "^1.7.5",
