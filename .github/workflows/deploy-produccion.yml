@@ -9,6 +9,9 @@ on:
 permissions:
   contents: read
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   deploy_cloudflare_worker:
     name: "1. Cloudflare: Actualizar Proxy/WAF en *.workers.dev"
@@ -16,7 +19,7 @@ jobs:
     environment: produccion
     steps:
       - name: Checkout rama produccion
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: produccion
 
@@ -34,14 +37,19 @@ jobs:
             echo "Aviso: Cloudflare ya construye automaticamente desde la rama produccion (o faltan secrets opcionales CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID). Omitiendo paso CLI."
           fi
 
+      - name: Configurar Node.js 24 para Wrangler
+        if: steps.check_cf.outputs.configured == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
       - name: Desplegar Worker en Cloudflare (*.workers.dev)
         if: steps.check_cf.outputs.configured == 'true'
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: cloudflare-worker
-          command: deploy
+        working-directory: cloudflare-worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --yes wrangler@latest deploy
 
   deploy_aws_ec2:
     name: "2. AWS EC2: Desplegar Contenedores en Ubuntu con Docker"
