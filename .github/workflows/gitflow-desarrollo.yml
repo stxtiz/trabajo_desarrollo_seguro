@@ -10,6 +10,9 @@ permissions:
   contents: write
   actions: write
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   validate_and_promote_to_qa:
     name: "Desarrollo -> Promocion Automatica a QA"
@@ -17,10 +20,15 @@ jobs:
     environment: desarrollo
     steps:
       - name: Checkout repositorio completo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
           token: ${{ secrets.GH_PAT || secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Configurar Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
 
       - name: Verificar sintaxis JS en Backend y Frontend
         run: |
@@ -35,7 +43,8 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git fetch origin qa:qa
           git checkout qa
-          git checkout origin/desarrollo -- frontend backend database .env.example .gitignore
+          git rm -rf --ignore-unmatch frontend backend database
+          git checkout origin/desarrollo -- frontend backend database .env.example .gitignore README.md
           if ! git diff --cached --quiet; then
             git commit -m "chore(gitflow): promover cambios desde desarrollo hacia qa para auditoria IA"
             git push origin qa

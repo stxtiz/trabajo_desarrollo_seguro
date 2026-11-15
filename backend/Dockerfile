@@ -2,7 +2,7 @@
 # DOCKERFILE BACKEND - NODE.JS + EXPRESS (OWASP ASVS v5.0 NIVEL 3)
 # Multi-stage build, non-root user, minimal attack surface
 # =============================================================================
-FROM node:22-alpine AS deps
+FROM node:24-alpine AS deps
 WORKDIR /app
 RUN apk add --no-cache python3 make g++ && \
     corepack enable && \
@@ -10,7 +10,7 @@ RUN apk add --no-cache python3 make g++ && \
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --prod --frozen-lockfile
 
-FROM node:22-alpine AS runner
+FROM node:24-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production \

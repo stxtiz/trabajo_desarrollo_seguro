@@ -1,7 +1,7 @@
 # =============================================================================
 # DOCKERFILE FRONTEND - REACT 19 + VITE + EXPRESS + PNPM (OWASP ASVS v5.0 NIVEL 3)
 # =============================================================================
-FROM node:22-alpine AS builder
+FROM node:24-alpine AS builder
 WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@12.18.0 --activate
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
@@ -11,13 +11,13 @@ COPY src ./src
 COPY public ./public
 RUN pnpm run build
 
-FROM node:22-alpine AS prod-deps
+FROM node:24-alpine AS prod-deps
 WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@12.18.0 --activate
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --prod --frozen-lockfile
 
-FROM node:22-alpine AS runner
+FROM node:24-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production \
