@@ -362,6 +362,32 @@ async function runTestSuite() {
     return 'Login exitoso con rotación de SID y CSRF, comentario registrado en /api/v1/comentarios (HTTP 201) e invalidación inmediata en logout.';
   });
 
+  // Test 9: Selector de Restaurantes con tokens opacos y protección RBAC en /api/v1/admin/* (ASVS V4.1)
+  await recordTest('QA-09', 'ASVS 5.0 V4.1 & V4.2.1 (L3)', 'Selector de restaurantes (/api/v1/restaurantes) con tokens ref opacos y bloqueo RBAC (HTTP 403) en /api/v1/admin/restaurantes sin autenticación', async () => {
+    const resRest = await fetch(`${BACKEND_URL}/api/v1/restaurantes`, {
+      headers: { Cookie: jar.getHeader() }
+    });
+    jar.updateFromHeaders(resRest.headers);
+    const restJson = await resRest.json();
+
+    if (resRest.status !== 200 || !restJson.ok || !Array.isArray(restJson.data?.restaurantes) || restJson.data.restaurantes.length === 0) {
+      throw new Error(`Respuesta inválida de /api/v1/restaurantes: HTTP ${resRest.status}`);
+    }
+    const invalidRest = restJson.data.restaurantes.find((r) => !r.ref || typeof r.ref !== 'string' || r.id !== undefined);
+    if (invalidRest) {
+      throw new Error('Un restaurante en /api/v1/restaurantes carece de token opaco ref o expone id numérico');
+    }
+
+    const resAdmin = await fetch(`${BACKEND_URL}/api/v1/admin/restaurantes`, {
+      headers: { Cookie: jar.getHeader() }
+    });
+    if (resAdmin.status !== 403) {
+      throw new Error(`Se esperaba HTTP 403 en /api/v1/admin/restaurantes sin autenticación, pero se recibió ${resAdmin.status}`);
+    }
+
+    return `${restJson.data.restaurantes.length} restaurante(s) activos con tokens ref opacos y 0 IDs numéricos; /api/v1/admin/restaurantes bloqueado con HTTP 403 sin autenticación.`;
+  });
+
   return results;
 }
 
