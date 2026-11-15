@@ -146,6 +146,13 @@ app.get(['/carrito', '/mostrar_carrito.html', '/mostrar_carrito.php'], (req, res
   return res.sendFile(path.join(distDir, 'index.html'));
 });
 
+app.get('/admin', (req, res) => {
+  if (req.query.id !== undefined || req.query.keyid !== undefined) {
+    return res.redirect(302, '/admin');
+  }
+  return res.sendFile(path.join(distDir, 'index.html'));
+});
+
 // Archivos estáticos compilados del SPA React (Vite dist/)
 app.use(
   express.static(distDir, {

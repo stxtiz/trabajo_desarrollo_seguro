@@ -20,6 +20,12 @@ class CarritoController {
         return JsonView.error(res, 'El restaurante no fue encontrado.', 404, 'RESTAURANT_NOT_FOUND');
       }
 
+      if (req.session && Number(req.session.restaurante_id) !== Number(idRestaurante)) {
+        await SesionModel.actualizarRestaurante(req.session.sid, idRestaurante);
+        req.session.restaurante_id = idRestaurante;
+        req.session.carrito = {};
+      }
+
       const restRef = encodeRef('rest', idRestaurante);
       const carritoObj = req.session?.carrito || {};
       const items = Object.values(carritoObj).map((item, idx) => ({
@@ -34,7 +40,7 @@ class CarritoController {
         restaurante: {
           ref: restRef,
           nombre: restaurante.nombre,
-          fotoUrl: restaurante.foto ? `media/${restRef}/${encodeURIComponent(restaurante.foto)}` : null
+          fotoUrl: RestauranteModel.resolveFotoUrl(restRef, restaurante.foto, restaurante.foto_data)
         },
         items,
         total,

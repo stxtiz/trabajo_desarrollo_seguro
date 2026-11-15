@@ -3,10 +3,31 @@
 const db = require('../config/database');
 
 class RestauranteModel {
+  static resolveFotoUrl(restRef, foto, fotoData) {
+    if (typeof fotoData === 'string' && fotoData.startsWith('data:image/')) {
+      return fotoData;
+    }
+    if (typeof foto === 'string' && foto.trim() !== '') {
+      return `media/${restRef}/${encodeURIComponent(foto.trim())}`;
+    }
+    return null;
+  }
+
+  static async listarActivos() {
+    const res = await db.query(
+      `SELECT r.id, r.nombre, r.foto, r.foto_data, d.comuna
+       FROM restaurantes r
+       INNER JOIN direcciones d ON r.direcciones_id = d.id
+       WHERE r.eliminado IS NULL
+       ORDER BY r.id ASC`
+    );
+    return res.rows;
+  }
+
   static async obtenerPorId(idRestaurante) {
     const res = await db.query(
       `SELECT d.calle, d.numero, d.comuna, d.region,
-              r.nombre, r.id, r.fono, r.email, r.foto
+              r.nombre, r.id, r.fono, r.email, r.foto, r.foto_data
        FROM restaurantes r
        INNER JOIN direcciones d ON r.direcciones_id = d.id
        WHERE r.id = $1 AND r.eliminado IS NULL
@@ -19,7 +40,7 @@ class RestauranteModel {
   static async obtenerDestacados(idRestaurante) {
     const res = await db.query(
       `SELECT i.id, i.visible, i.tiempo, i.puntuacion, i.destacado, i.precio,
-              i.descripcion, i.observaciones, i.nombre, i.foto, i.orden,
+              i.descripcion, i.observaciones, i.nombre, i.foto, i.foto_data, i.orden,
               c.restaurantes_id
        FROM categorias cat
        INNER JOIN items i ON i.categorias_id = cat.id
@@ -40,7 +61,7 @@ class RestauranteModel {
 
   static async obtenerEstructuraCarta(idRestaurante) {
     const cartasRes = await db.query(
-      `SELECT id, restaurantes_id, nombre, orden, visible
+      `SELECT id, restaurantes_id, nombre, orden, visible, foto, foto_data
        FROM cartas
        WHERE restaurantes_id = $1 AND visible = TRUE AND eliminada IS NULL
        ORDER BY orden ASC NULLS LAST, id ASC`,
@@ -50,7 +71,7 @@ class RestauranteModel {
     if (cartas.length === 0) return [];
 
     const categoriasRes = await db.query(
-      `SELECT id, nombre, cartas_id, orden
+      `SELECT id, nombre, cartas_id, orden, foto, foto_data
        FROM categorias
        WHERE visible = TRUE AND eliminado IS NULL AND cartas_id = ANY($1::int[])
        ORDER BY orden ASC NULLS LAST, id ASC`,
@@ -62,7 +83,7 @@ class RestauranteModel {
     if (categorias.length > 0) {
       const itemsRes = await db.query(
         `SELECT id, visible, nombre, descripcion, observaciones, tiempo,
-                puntuacion, precio, foto, orden, categorias_id
+                puntuacion, precio, foto, foto_data, orden, categorias_id
          FROM items
          WHERE visible = TRUE AND eliminado IS NULL AND categorias_id = ANY($1::int[])
          ORDER BY orden ASC NULLS LAST, id ASC`,
@@ -87,6 +108,8 @@ class RestauranteModel {
       categoriasPorCarta.get(cat.cartas_id).push({
         id: cat.id,
         nombre: cat.nombre,
+        foto: cat.foto,
+        foto_data: cat.foto_data,
         items: itemsPorCategoria.get(cat.id) || []
       });
     }
@@ -95,6 +118,8 @@ class RestauranteModel {
       id: carta.id,
       nombre: carta.nombre,
       orden: carta.orden,
+      foto: carta.foto,
+      foto_data: carta.foto_data,
       categorias: categoriasPorCarta.get(carta.id) || []
     }));
   }

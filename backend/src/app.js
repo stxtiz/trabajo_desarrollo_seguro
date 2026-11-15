@@ -102,7 +102,7 @@ app.use(
       return callback(null, false);
     },
     credentials: true,
-    methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'X-CSRF-Token', 'X-Request-Id', 'X-Carta-Ref']
   })
 );
@@ -112,6 +112,7 @@ app.use('/api', apiLimiter);
 
 // 5. Parsers con l├¡mites estrictos de tama├▒o para mitigar ataques de denegaci├│n de servicio (ASVS v5.0 V12 / V13)
 app.use(cookieParser());
+app.use('/api/v1/admin', express.json({ limit: '512kb', strict: true }));
 app.use(express.json({ limit: '16kb', strict: true }));
 app.use(express.urlencoded({ extended: false, limit: '16kb', parameterLimit: 20 }));
 app.use(compression());
@@ -127,7 +128,8 @@ app.use((req, res) => {
 // 8. Manejador Global de Errores sin filtraci├│n de trazas internas (OWASP ASVS v5.0 V7.4)
 app.use((err, req, res, _next) => {
   if (err.type === 'entity.too.large') {
-    return JsonView.error(res, 'El tama├▒o de la petici├│n excede el l├¡mite permitido (16KB).', 413, 'PAYLOAD_TOO_LARGE');
+    const limitLabel = req.originalUrl?.startsWith('/api/v1/admin') ? '512KB' : '16KB';
+    return JsonView.error(res, `El tamaño de la petición excede el límite permitido (${limitLabel}).`, 413, 'PAYLOAD_TOO_LARGE');
   }
   if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
     return JsonView.error(res, 'Formato JSON inv├ílido en el cuerpo de la petici├│n.', 400, 'INVALID_JSON');
