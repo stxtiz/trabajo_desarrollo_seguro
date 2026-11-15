@@ -1,0 +1,141 @@
+#!/bin/bash
+# =============================================================================
+# BOOTSTRAP AUTOMÁTICO EC2 UBUNTU 24.04 LTS - CARTA DIGITAL PNK SECURITY
+# Estándar de Seguridad: OWASP ASVS v5.0 Nivel 3
+# =============================================================================
+set -euo pipefail
+
+exec > >(tee -a /var/log/pnk-userdata.log) 2>&1
+export DEBIAN_FRONTEND=noninteractive
+
+echo "=== [PNK Security] Inicio de bootstrap $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
+
+# 1. Configurar Swap de 2 GB (crítico para instancias Free Tier de 1 GB RAM)
+if [ ! -f /swapfile ]; then
+  echo "[1/6] Creando archivo /swapfile de 2 GB..."
+  fallocate -l 2G /swapfile
+  chmod 600 /swapfile
+  mkswap /swapfile
+  swapon /swapfile
+  grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+
+# 2. Instalar dependencias base, PostgreSQL client y Docker Engine + Compose v2
+echo "[2/6] Actualizando paquetes e instalando Docker Engine y herramientas..."
+apt-get -o DPkg::Lock::Timeout=120 update -y
+apt-get -o DPkg::Lock::Timeout=120 install -y \
+  ca-certificates \
+  curl \
+  git \
+  gnupg \
+  openssl \
+  postgresql-client
+
+if ! command -v docker >/dev/null 2>&1; then
+  install -m 0755 -d /etc/apt/keyrings
+  curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+  chmod a+r /etc/apt/keyrings/docker.gpg
+  . /etc/os-release
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $VERSION_CODENAME stable" \
+    > /etc/apt/sources.list.d/docker.list
+  apt-get -o DPkg::Lock::Timeout=120 update -y
+  if ! apt-get -o DPkg::Lock::Timeout=120 install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
+    echo "Fallback a paquetes docker.io / docker-compose-v2 de Ubuntu..."
+    apt-get -o DPkg::Lock::Timeout=120 install -y docker.io docker-compose-v2
+  fi
+fi
+
+systemctl enable docker
+systemctl start docker
+usermod -aG docker ubuntu || true
+
+# 3. Clonar rama produccion, descargar certificado SSL RDS y generar .env seguro
+echo "[3/6] Clonando rama ${git_branch} en /opt/carta-digital y configurando .env..."
+APP_DIR="/opt/carta-digital"
+if [ ! -d "$APP_DIR/.git" ]; then
+  rm -rf "$APP_DIR"
+  git clone -b "${git_branch}" --single-branch "${git_repo_url}" "$APP_DIR"
+else
+  cd "$APP_DIR"
+  git fetch origin "${git_branch}"
+  git reset --hard "origin/${git_branch}"
+fi
+
+mkdir -p "$APP_DIR/certs"
+curl -fsSL "https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem" \
+  -o "$APP_DIR/certs/rds-global-bundle.pem"
+chmod 644 "$APP_DIR/certs/rds-global-bundle.pem"
+
+cat <<'ENVEOF' > "$APP_DIR/.env"
+NODE_ENV=production
+POSTGRES_HOST=${rds_address}
+POSTGRES_PORT=5432
+POSTGRES_DB=${db_name}
+POSTGRES_USER=${db_username}
+POSTGRES_PASSWORD=${db_password}
+POSTGRES_SSL=true
+POSTGRES_SSL_CA=/app/certs/rds-global-bundle.pem
+PASSWORD_PEPPER=${password_pepper}
+CORS_ORIGIN=${cors_origin}
+ENFORCE_HTTPS=1
+ENVEOF
+
+chmod 600 "$APP_DIR/.env"
+chown -R ubuntu:ubuntu "$APP_DIR"
+
+# 4. Esperar disponibilidad de Amazon RDS PostgreSQL
+echo "[4/6] Esperando disponibilidad de Amazon RDS en ${rds_address}:5432..."
+RDS_READY=0
+for i in $(seq 1 60); do
+  if pg_isready -h "${rds_address}" -p 5432 -U "${db_username}" -d "${db_name}" >/dev/null 2>&1; then
+    echo "RDS disponible en el intento $i."
+    RDS_READY=1
+    break
+  fi
+  sleep 5
+done
+
+if [ "$RDS_READY" -ne 1 ]; then
+  echo "ERROR: Amazon RDS no respondió a pg_isready tras 300 segundos."
+  exit 1
+fi
+
+# 5. Inicializar esquema SQL solo si public.usuarios NO existe (con advisory lock contra carreras ASG)
+echo "[5/6] Verificando esquema SQL en Amazon RDS..."
+export PGPASSWORD='${db_password}'
+export PGSSLMODE="verify-full"
+export PGSSLROOTCERT="$APP_DIR/certs/rds-global-bundle.pem"
+
+SQL_INIT_OK=0
+for attempt in $(seq 1 5); do
+  if psql -v ON_ERROR_STOP=1 -h "${rds_address}" -p 5432 -U "${db_username}" -d "${db_name}" <<'PSQL_INIT'
+SELECT pg_advisory_lock(9042026);
+SELECT (to_regclass('public.usuarios') IS NULL) AS needs_init \gset
+\if :needs_init
+  \echo 'Tabla public.usuarios no existe. Ejecutando /opt/carta-digital/database/init.sql...'
+  \i /opt/carta-digital/database/init.sql
+\else
+  \echo 'Tabla public.usuarios ya existe. Omitiendo init.sql para proteger datos existentes.'
+\endif
+SELECT pg_advisory_unlock(9042026);
+PSQL_INIT
+  then
+    SQL_INIT_OK=1
+    break
+  fi
+  echo "Reintentando verificación/inicialización SQL (intento $attempt/5)..."
+  sleep 5
+done
+unset PGPASSWORD
+
+if [ "$SQL_INIT_OK" -ne 1 ]; then
+  echo "ERROR: Falló la verificación/inicialización SQL en Amazon RDS."
+  exit 1
+fi
+
+# 6. Construir e iniciar contenedores en modo producción con Amazon RDS
+echo "[6/6] Levantando contenedores con docker-compose.rds.yml..."
+cd "$APP_DIR"
+docker compose -f docker-compose.rds.yml up -d --build
+
+echo "=== [PNK Security] Bootstrap finalizado exitosamente $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="

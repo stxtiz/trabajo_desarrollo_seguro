@@ -11,3 +11,12 @@ qa-ai/reports/*.md
 DESPLIEGUE_AWS_EC2.md
 DESPLIEGUE_CLOUDFLARE.md
 CUMPLIMIENTO_ASVS_5.0.md
+
+# Terraform / AWS IaC (estado local, caché y llaves privadas generadas)
+infra/aws/.terraform/
+infra/aws/.terraform.lock.hcl
+infra/aws/*.tfstate
+infra/aws/*.tfstate.*
+infra/aws/*.pem
+infra/aws/outputs-despliegue.json
+infra/aws/terraform.tfvars
