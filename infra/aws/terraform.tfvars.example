@@ -1,0 +1,16 @@
+# =============================================================================
+# EJEMPLO DE VARIABLES PARA PERSONALIZAR EL DESPLIEGUE (OPCIONAL)
+# Copia este archivo como terraform.tfvars si deseas modificar los valores base
+# =============================================================================
+
+aws_region           = "us-east-1"
+project_name         = "pnk-carta-digital"
+environment          = "produccion"
+instance_type        = "t3.micro"
+db_instance_class    = "db.t3.micro"
+ssh_allowed_cidr     = "0.0.0.0/0"
+git_branch           = "produccion"
+cors_origin          = "*"
+asg_min_size         = 1
+asg_desired_capacity = 1
+asg_max_size         = 3
