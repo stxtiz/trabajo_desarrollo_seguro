@@ -93,10 +93,34 @@ function requireAuth(req, res, next) {
   return next();
 }
 
+/**
+ * Middleware de Autorización RBAC para Administradores (OWASP ASVS v5.0 V4.1)
+ */
+async function requireAdmin(req, res, next) {
+  if (!req.session || !req.session.usuario_id || !req.session.nombre_usuario) {
+    return JsonView.error(res, 'Debe iniciar sesión para realizar esta acción.', 403, 'AUTH_REQUIRED');
+  }
+
+  if (req.session.rol !== 'admin') {
+    await AuditoriaModel.registrar({
+      evento: 'AUTHZ_ADMIN_DENIED',
+      severidad: 'WARN',
+      usuarioId: req.session.usuario_id,
+      ipAddress: req.ip || '0.0.0.0',
+      requestId: res.locals.requestId,
+      detalles: { path: req.originalUrl, method: req.method, rol: req.session.rol || null }
+    });
+    return JsonView.error(res, 'Acceso restringido exclusivamente a administradores.', 403, 'FORBIDDEN_ADMIN_ONLY');
+  }
+
+  return next();
+}
+
 module.exports = {
   sessionMiddleware,
   verifyCsrf,
   requireAuth,
+  requireAdmin,
   setSessionCookie,
   clearSessionCookie
 };

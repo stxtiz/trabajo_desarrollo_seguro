@@ -37,12 +37,15 @@ export function getRestauranteRef() {
   return currentRestauranteRef;
 }
 
+const ALLOWED_CLEAN_PATHS = new Set(['/carta', '/carrito', '/admin']);
+
 /**
  * Garantiza que en la barra de direcciones del navegador NUNCA aparezcan parámetros ?id=, ?keyid= ni extensiones .php/.html
  */
 export function enforceObfuscatedUrl(cleanPath = '/carta') {
-  if (window.location.pathname !== cleanPath || window.location.search !== '') {
-    window.history.replaceState({}, document.title, cleanPath);
+  const targetPath = ALLOWED_CLEAN_PATHS.has(cleanPath) ? cleanPath : '/carta';
+  if (window.location.pathname !== targetPath || window.location.search !== '') {
+    window.history.replaceState({}, document.title, targetPath);
   }
 }
 

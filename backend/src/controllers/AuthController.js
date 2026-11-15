@@ -14,11 +14,14 @@ const DUMMY_HASH = '$pbkdf2-sha512$310000$pnk_salt_dummy_2026_asvs5$060a5048b3e8
 class AuthController {
   static async obtenerSesion(req, res) {
     const restId = req.session?.restaurante_id || 1;
+    const autenticado = Boolean(req.session?.usuario_id);
+    const rol = autenticado ? (req.session?.rol || 'user') : null;
     return JsonView.success(res, {
-      autenticado: Boolean(req.session?.usuario_id),
-      usuario: req.session?.usuario_id
-        ? { nombre: req.session.nombre_usuario }
+      autenticado,
+      usuario: autenticado
+        ? { nombre: req.session.nombre_usuario, rol }
         : null,
+      rol,
       restauranteRef: encodeRef('rest', restId),
       csrfToken: req.session?.csrf_token || null
     });
@@ -109,11 +112,15 @@ class AuthController {
         detalles: { email }
       });
 
+      const rol = UsuarioModel.resolveRol(usuario);
+
       return JsonView.success(res, {
         autenticado: true,
         usuario: {
-          nombre: usuario.nombre
+          nombre: usuario.nombre,
+          rol
         },
+        rol,
         restauranteRef: encodeRef('rest', restauranteId),
         csrfToken: nuevaSesion.csrf_token
       });
@@ -151,6 +158,7 @@ class AuthController {
 
       return JsonView.success(res, {
         autenticado: false,
+        rol: null,
         restauranteRef: encodeRef('rest', restauranteId),
         csrfToken: sesionAnon.csrf_token
       });

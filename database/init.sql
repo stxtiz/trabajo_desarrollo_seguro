@@ -50,6 +50,7 @@ CREATE TABLE restaurantes (
     fono VARCHAR(45) NOT NULL,
     mapa VARCHAR(200) DEFAULT NULL,
     foto VARCHAR(200) DEFAULT NULL,
+    foto_data TEXT DEFAULT NULL,
     email VARCHAR(100) DEFAULT NULL,
     creado TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     actualizado TIMESTAMPTZ DEFAULT NULL,
@@ -75,6 +76,7 @@ CREATE TABLE cartas (
     orden INTEGER DEFAULT NULL,
     visible BOOLEAN NOT NULL DEFAULT TRUE,
     foto VARCHAR(200) DEFAULT NULL,
+    foto_data TEXT DEFAULT NULL,
     creada TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     actualizada TIMESTAMPTZ DEFAULT NULL,
     eliminada TIMESTAMPTZ DEFAULT NULL,
@@ -102,6 +104,7 @@ CREATE TABLE categorias (
     nombre VARCHAR(100) NOT NULL,
     visible BOOLEAN NOT NULL DEFAULT FALSE,
     foto VARCHAR(200) DEFAULT NULL,
+    foto_data TEXT DEFAULT NULL,
     orden INTEGER DEFAULT NULL,
     creado TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     actualizado TIMESTAMPTZ DEFAULT NULL,
@@ -139,6 +142,7 @@ CREATE TABLE items (
     destacado BOOLEAN NOT NULL DEFAULT FALSE,
     puntuacion INTEGER NOT NULL DEFAULT 0 CHECK (puntuacion >= 0 AND puntuacion <= 5),
     foto VARCHAR(200) DEFAULT NULL,
+    foto_data TEXT DEFAULT NULL,
     orden INTEGER DEFAULT NULL,
     creado TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     actualizado TIMESTAMPTZ DEFAULT NULL,
@@ -171,6 +175,7 @@ CREATE TABLE usuarios (
     nombre VARCHAR(255) NOT NULL,
     email VARCHAR(255) NOT NULL UNIQUE,
     password VARCHAR(512) NOT NULL,
+    rol VARCHAR(20) NOT NULL DEFAULT 'user',
     estado VARCHAR(10) NOT NULL DEFAULT '1',
     intentos_fallidos INTEGER NOT NULL DEFAULT 0,
     bloqueado_hasta TIMESTAMPTZ DEFAULT NULL,
@@ -180,9 +185,9 @@ CREATE TABLE usuarios (
 -- Contraseñas iniciales hasheadas con PBKDF2-HMAC-SHA512 (310,000 iteraciones) y migración automática a Argon2id (ASVS v5.0 V2.4)
 -- admin@gmail.com   -> admin01
 -- alondra@gmail.com -> AlondraSegur0!2026#PNK
-INSERT INTO usuarios (id, nombre, email, password, estado) VALUES
-(1, 'Administrador', 'admin@gmail.com', '$pbkdf2-sha512$310000$7749c5886da93d8dc0d493e772a1d8f0$90d39ba70bf78ab0623cd874bcab04908cdd7c02620f7932060c6cd26a5c4060505abf1118770dac63d5450319dbb3fac5aa326499925200455c39da6493774e', '1'),
-(2, 'Alondra', 'alondra@gmail.com', '$pbkdf2-sha512$310000$pnk_salt_alondra_2026_asvs5$c4cab461a3242e19276a76a1a970d0af92cb237f7d70724ae67abebd475504a15231a9f94a792045a1d24d8b75301a440a96250277370821f2db0d016506720a', '1');
+INSERT INTO usuarios (id, nombre, email, password, rol, estado) VALUES
+(1, 'Administrador', 'admin@gmail.com', '$pbkdf2-sha512$310000$7749c5886da93d8dc0d493e772a1d8f0$90d39ba70bf78ab0623cd874bcab04908cdd7c02620f7932060c6cd26a5c4060505abf1118770dac63d5450319dbb3fac5aa326499925200455c39da6493774e', 'admin', '1'),
+(2, 'Alondra', 'alondra@gmail.com', '$pbkdf2-sha512$310000$pnk_salt_alondra_2026_asvs5$c4cab461a3242e19276a76a1a970d0af92cb237f7d70724ae67abebd475504a15231a9f94a792045a1d24d8b75301a440a96250277370821f2db0d016506720a', 'user', '1');
 
 SELECT setval(pg_get_serial_sequence('usuarios', 'id'), 2, true);
 

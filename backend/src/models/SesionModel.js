@@ -3,6 +3,7 @@
 const db = require('../config/database');
 const env = require('../config/env');
 const { generateSecureToken } = require('../utils/cryptoUtils');
+const UsuarioModel = require('./UsuarioModel');
 
 class SesionModel {
   static async crear({ usuarioId = null, nombreUsuario = null, restauranteId = 1, carrito = {}, ipAddress = '0.0.0.0', userAgent = '' }) {
@@ -25,7 +26,8 @@ class SesionModel {
     }
 
     const res = await db.query(
-      `SELECT s.*, u.estado AS usuario_estado, u.nombre AS usuario_nombre_db
+      `SELECT s.*, u.estado AS usuario_estado, u.nombre AS usuario_nombre_db,
+              u.rol AS usuario_rol, u.email AS usuario_email
        FROM sesiones s
        LEFT JOIN usuarios u ON s.usuario_id = u.id
        WHERE s.sid = $1 LIMIT 1`,
@@ -48,8 +50,16 @@ class SesionModel {
     }
 
     await db.query(`UPDATE sesiones SET ultima_actividad = CURRENT_TIMESTAMP WHERE sid = $1`, [sid]);
-    if (sesion.usuario_id !== null && sesion.usuario_nombre_db) {
-      sesion.nombre_usuario = sesion.usuario_nombre_db;
+    if (sesion.usuario_id !== null) {
+      if (sesion.usuario_nombre_db) {
+        sesion.nombre_usuario = sesion.usuario_nombre_db;
+      }
+      sesion.rol = UsuarioModel.resolveRol({
+        rol: sesion.usuario_rol,
+        email: sesion.usuario_email
+      });
+    } else {
+      sesion.rol = null;
     }
     return sesion;
   }
@@ -72,7 +82,15 @@ class SesionModel {
   }
 
   static async actualizarRestaurante(sid, restauranteId) {
-    await db.query(`UPDATE sesiones SET restaurante_id = $2, ultima_actividad = CURRENT_TIMESTAMP WHERE sid = $1`, [sid, restauranteId]);
+    if (!sid) return;
+    await db.query(
+      `UPDATE sesiones
+       SET restaurante_id = $2,
+           carrito = CASE WHEN restaurante_id IS DISTINCT FROM $2 THEN '{}'::jsonb ELSE carrito END,
+           ultima_actividad = CURRENT_TIMESTAMP
+       WHERE sid = $1`,
+      [sid, restauranteId]
+    );
   }
 
   static async actualizarCarrito(sid, carrito) {

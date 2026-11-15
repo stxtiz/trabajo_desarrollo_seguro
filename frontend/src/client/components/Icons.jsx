@@ -98,8 +98,15 @@ export function SafeImage({
     setFailed(false);
   }, [fotoUrl]);
 
-  const src = !failed && fotoUrl ? `/${fotoUrl}` : fallbackSrc;
-  const effectiveAlt = !failed && fotoUrl ? alt || fallbackAlt : fallbackAlt;
+  const resolvedFotoUrl =
+    typeof fotoUrl === 'string' && fotoUrl.length > 0
+      ? fotoUrl.startsWith('data:image/') || fotoUrl.startsWith('/')
+        ? fotoUrl
+        : `/${fotoUrl}`
+      : null;
+
+  const src = !failed && resolvedFotoUrl ? resolvedFotoUrl : fallbackSrc;
+  const effectiveAlt = !failed && resolvedFotoUrl ? alt || fallbackAlt : fallbackAlt;
 
   return (
     <img
