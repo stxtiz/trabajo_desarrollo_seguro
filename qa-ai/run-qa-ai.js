@@ -58,7 +58,10 @@ async function waitForServices(maxRetries = 30) {
         fetch(`${FRONTEND_URL}/health`)
       ]);
       if (resBack.ok && resFront.ok) {
-        return true;
+        const frontHealth = await resFront.json().catch(() => null);
+        if (frontHealth?.ok === true && frontHealth?.framework === 'react') {
+          return true;
+        }
       }
     } catch {
       // Esperando a que levanten los contenedores
@@ -142,29 +145,76 @@ async function runTestSuite() {
     return 'URLs limpias (/carta y /carrito), ?id= y ?keyid= eliminados/bloqueados (HTTP 302/400) y /imagenes/cod1 bloqueado (HTTP 403).';
   });
 
-  // Test 3: Paridad de Diseño Visual y Eliminación de jQuery / AJAX antiguo
-  await recordTest('QA-03', 'ASVS 5.0 V14.2 / UI Parity', 'Mismo diseño visual de la Carta Digital y cero uso de jQuery / $.ajax deprecado', async () => {
-    const [resIndex, resCarrito, resJs] = await Promise.all([
+  // Test 3: Paridad de Diseño Visual (React 19 + Vite SPA) y Eliminación de jQuery / AJAX antiguo
+  await recordTest('QA-03', 'ASVS 5.0 V14.2 / UI Parity', 'Mismo diseño visual de la Carta Digital (React 19 + Vite SPA) y cero uso de jQuery / $.ajax deprecado', async () => {
+    const [resIndex, resCarrito, resLegacyJs] = await Promise.all([
       fetch(`${FRONTEND_URL}/carta`),
       fetch(`${FRONTEND_URL}/carrito`),
       fetch(`${FRONTEND_URL}/js/cartaApp.js`)
     ]);
+    if (!resIndex.ok) {
+      throw new Error(`GET /carta respondió HTTP ${resIndex.status}`);
+    }
+    if (!resCarrito.ok) {
+      throw new Error(`GET /carrito respondió HTTP ${resCarrito.status}`);
+    }
+    if (resLegacyJs.status !== 404) {
+      throw new Error(`Archivo legacy /js/cartaApp.js sigue accesible (HTTP ${resLegacyJs.status}, se esperaba 404)`);
+    }
+
     const htmlIndex = (await resIndex.text()).replace(/<!--[\s\S]*?-->/g, '');
     const htmlCarrito = (await resCarrito.text()).replace(/<!--[\s\S]*?-->/g, '');
-    const codeJs = await resJs.text();
-    const codeJsWithoutComments = codeJs.replace(/\/\*[\s\S]*?\*\/|\/\/.*/g, '');
 
-    const requiredClasses = ['logosintituciones', 'button_carrito', 'featured-carousel', 'nav-tabs', 'myModal', 'footer-area'];
-    for (const cls of requiredClasses) {
-      if (!htmlIndex.includes(cls)) throw new Error(`Falta clase visual original en /carta: ${cls}`);
+    const requiredHtmlMarkers = ['id="root"', 'id="meta-csrf-token"', '/css/style.css', '/vendors/bootstrap/bootstrap.min.css'];
+    for (const marker of requiredHtmlMarkers) {
+      if (!htmlIndex.includes(marker) || !htmlCarrito.includes(marker)) {
+        throw new Error(`Falta marcador HTML esperado del SPA React/Vite (${marker}) en /carta o /carrito`);
+      }
     }
-    if (!htmlCarrito.includes('table-hover') || !htmlCarrito.includes('Productos Agregados para Solicitar')) {
-      throw new Error('Estructura visual de /carrito no coincide con el diseño original');
+    if (htmlIndex.includes('/js/cartaApp.js') || htmlCarrito.includes('/js/cartaApp.js')) {
+      throw new Error('Se detectó referencia legacy a /js/cartaApp.js en el HTML');
     }
-    if (htmlIndex.toLowerCase().includes('jquery') || htmlCarrito.toLowerCase().includes('jquery') || codeJsWithoutComments.includes('$.ajax(')) {
-      throw new Error('Se detectó referencia ejecutable a jQuery o $.ajax deprecado');
+
+    const bundleMatch = htmlIndex.match(/\/assets\/index-[a-zA-Z0-9_-]+\.js/);
+    if (!bundleMatch) {
+      throw new Error('No se encontró el script del bundle Vite (/assets/index-*.js) en el HTML de /carta');
     }
-    return 'HTML/CSS conserva 100% las clases e íconos originales en /carta y /carrito; 0 referencias a jQuery/$.ajax.';
+
+    const bundlePath = bundleMatch[0];
+    const resBundle = await fetch(`${FRONTEND_URL}${bundlePath}`);
+    if (!resBundle.ok) {
+      throw new Error(`Fallo al descargar el bundle React ${bundlePath}: HTTP ${resBundle.status}`);
+    }
+    const bundleCode = await resBundle.text();
+
+    const requiredDomIdentifiers = [
+      'logosintituciones',
+      'button_carrito',
+      'featured-carousel',
+      'nav-tabs',
+      'myModal',
+      'footer-area',
+      'table-hover',
+      'Productos Agregados para Solicitar',
+      'navbar-auth-container',
+      'carrito-tbody'
+    ];
+    for (const identifier of requiredDomIdentifiers) {
+      if (!bundleCode.includes(identifier)) {
+        throw new Error(`Falta identificador visual/DOM original en el bundle React: ${identifier}`);
+      }
+    }
+
+    if (
+      htmlIndex.toLowerCase().includes('jquery') ||
+      htmlCarrito.toLowerCase().includes('jquery') ||
+      bundleCode.toLowerCase().includes('jquery') ||
+      bundleCode.includes('$.ajax(')
+    ) {
+      throw new Error('Se detectó referencia a jQuery o $.ajax deprecado');
+    }
+
+    return `SPA React 19 + Vite (${bundlePath}) conserva 100% los identificadores visuales en /carta y /carrito; /js/cartaApp.js devuelve 404; 0 referencias a jQuery/$.ajax.`;
   });
 
   // Test 4: Carga de Carta Digital desde PostgreSQL con Tokens Criptográficos Ofuscados
@@ -255,7 +305,7 @@ async function runTestSuite() {
       },
       body: JSON.stringify({
         email: 'admin@gmail.com',
-        password: process.env.QA_TEST_ADMIN_PASSWORD || 'AdminSegur0!2026#PNK'
+        password: process.env.QA_TEST_ADMIN_PASSWORD || 'admin01'
       })
     });
     jar.updateFromHeaders(resLogin.headers);
@@ -318,7 +368,7 @@ async function runTestSuite() {
 async function consultarGitHubCopilotModels(testResults) {
   const failedCount = testResults.filter((t) => t.status !== 'PASS').length;
   const promptSistema = `Eres un Auditor Principal de Ciberseguridad y QA Automatizado especializado en la norma OWASP ASVS v5.0 Nivel 3.
-Analiza los resultados de las pruebas dinámicas ejecutadas en el ambiente QA de la aplicación "Carta Digital - PNK Security" (arquitectura separada en Front-End y Back-End con Node.js, Express y PostgreSQL, con ofuscación criptográfica de URLs e identificadores).
+Analiza los resultados de las pruebas dinámicas ejecutadas en el ambiente QA de la aplicación "Carta Digital - PNK Security" (arquitectura separada en Front-End y Back-End con React 19 + Vite + Express + PostgreSQL + pnpm bajo OWASP ASVS v5.0 Level 3, con ofuscación criptográfica de URLs e identificadores).
 Debes emitir un informe técnico estructurado en Markdown con:
 1. Veredicto Global de QA: APROBADO PARA PRODUCCIÓN o RECHAZADO.
 2. Evaluación detallada de cada control OWASP ASVS v5.0 Nivel 3 probado (incluyendo ofuscación de URLs sin exponer ?id= ni ?keyid=).

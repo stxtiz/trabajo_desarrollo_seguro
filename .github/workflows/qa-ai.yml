@@ -11,6 +11,9 @@ permissions:
   actions: write
   models: read
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   qa_ai_testing:
     name: "QA IA (GitHub Copilot Models) - Auditoria OWASP ASVS 5.0 L3"
@@ -18,7 +21,7 @@ jobs:
     environment: qa
     steps:
       - name: Checkout rama QA
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: qa
 
@@ -64,7 +67,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repositorio completo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
           token: ${{ secrets.GH_PAT || secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
@@ -76,7 +79,8 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git fetch origin produccion:produccion
           git checkout produccion
-          git checkout origin/qa -- frontend backend database .env.example .gitignore
+          git rm -rf --ignore-unmatch frontend backend database
+          git checkout origin/qa -- frontend backend database .env.example .gitignore README.md
           if ! git diff --cached --quiet; then
             git commit -m "chore(release): codigo auditado y aprobado por IA en QA promovido a produccion"
             git push origin produccion

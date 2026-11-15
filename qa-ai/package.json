@@ -4,10 +4,11 @@
   "description": "Agente de QA Automatizado impulsado por IA (GitHub Copilot / GitHub Models) bajo estándar OWASP ASVS v5.0 Nivel 3",
   "main": "run-qa-ai.js",
   "type": "commonjs",
+  "packageManager": "pnpm@12.18.0",
   "scripts": {
     "start": "node run-qa-ai.js"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=24.0.0"
   }
 }
