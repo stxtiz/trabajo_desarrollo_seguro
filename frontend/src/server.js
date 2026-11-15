@@ -9,6 +9,7 @@ const { createProxyMiddleware } = require('http-proxy-middleware');
 
 const PORT = Number.parseInt(process.env.FRONTEND_PORT || process.env.PORT || '8080', 10);
 const BACKEND_URL = process.env.BACKEND_URL || 'http://backend:3000';
+const distDir = path.join(__dirname, '..', 'dist');
 const publicDir = path.join(__dirname, '..', 'public');
 
 const app = express();
@@ -55,6 +56,7 @@ app.get('/health', (req, res) => {
   res.status(200).json({
     ok: true,
     service: 'pnk-carta-digital-frontend',
+    framework: 'react',
     urlObfuscation: 'enabled',
     status: 'healthy'
   });
@@ -62,7 +64,10 @@ app.get('/health', (req, res) => {
 
 // Bloquear acceso externo a endpoints internos del Backend (/api/internal/*) (ASVS v5.0 V4.1)
 app.use('/api/internal', (req, res) => {
-  res.status(403).json({ ok: false, error: { code: 'FORBIDDEN_INTERNAL_ROUTE', message: 'Ruta interna restringida.' } });
+  res.status(403).json({
+    ok: false,
+    error: { code: 'FORBIDDEN_INTERNAL_ROUTE', message: 'Ruta interna restringida.' }
+  });
 });
 
 // Proxy reverso hacia el contenedor Back-End (/api -> BACKEND_URL/api)
@@ -94,9 +99,10 @@ app.get('/media/:restRef/:filename', async (req, res) => {
     }
     const { data } = await resolveRes.json();
     const folder = path.basename(String(data?.folder || ''));
-    const fullPath = path.join(publicDir, 'imagenes', folder, safeFilename);
+    const imagenesBase = path.join(publicDir, 'imagenes');
+    const fullPath = path.join(imagenesBase, folder, safeFilename);
 
-    if (!fullPath.startsWith(path.join(publicDir, 'imagenes')) || !fs.existsSync(fullPath)) {
+    if (!fullPath.startsWith(imagenesBase + path.sep) || !fs.existsSync(fullPath)) {
       return res.sendFile(path.join(publicDir, 'img', 'carta_comodin.png'));
     }
     return res.sendFile(fullPath);
@@ -105,9 +111,12 @@ app.get('/media/:restRef/:filename', async (req, res) => {
   }
 });
 
-// Bloquear acceso directo a /imagenes/cod* para evitar enumeración de IDs de restaurantes
+// Bloquear acceso directo a /imagenes/cod* ANTES de los middlewares estáticos (dist/ y public/)
+// para evitar enumeración de IDs de restaurantes (OWASP ASVS v5.0)
 app.use('/imagenes', (req, res) => {
-  res.status(403).send('Acceso directo a directorios internos bloqueado por política de ofuscación ASVS v5.0.');
+  res
+    .status(403)
+    .send('Acceso directo a directorios internos bloqueado por política de ofuscación ASVS v5.0.');
 });
 
 // Middleware de Limpieza y Ofuscación de URL:
@@ -122,7 +131,7 @@ app.get(['/', '/carta', '/c/:ref', '/index.html', '/index.php'], (req, res) => {
   ) {
     return res.redirect(302, '/carta');
   }
-  return res.sendFile(path.join(publicDir, 'index.html'));
+  return res.sendFile(path.join(distDir, 'index.html'));
 });
 
 app.get(['/carrito', '/mostrar_carrito.html', '/mostrar_carrito.php'], (req, res) => {
@@ -134,10 +143,20 @@ app.get(['/carrito', '/mostrar_carrito.html', '/mostrar_carrito.php'], (req, res
   ) {
     return res.redirect(302, '/carrito');
   }
-  return res.sendFile(path.join(publicDir, 'mostrar_carrito.html'));
+  return res.sendFile(path.join(distDir, 'index.html'));
 });
 
-// Archivos estáticos públicos (CSS, iconos, módulos JS nativos)
+// Archivos estáticos compilados del SPA React (Vite dist/)
+app.use(
+  express.static(distDir, {
+    etag: true,
+    maxAge: '1h',
+    dotfiles: 'deny',
+    index: false
+  })
+);
+
+// Respaldo de archivos estáticos públicos (CSS, iconos, imágenes comodín)
 app.use(
   express.static(publicDir, {
     etag: true,
@@ -157,6 +176,7 @@ app.listen(PORT, '0.0.0.0', () => {
       timestamp: new Date().toISOString(),
       level: 'INFO',
       event: 'FRONTEND_SERVER_STARTED',
+      framework: 'react',
       port: PORT,
       backendTarget: BACKEND_URL
     }) + '\n'

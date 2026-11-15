@@ -1,5 +1,5 @@
 /**
- * Cliente HTTP moderno basado en Fetch API nativa (ES2024+)
+ * Cliente HTTP moderno basado en Fetch API nativa
  * Sin librerías legacy ni llamadas XMLHttpRequest deprecadas.
  * Cumple OWASP ASVS v5.0 Nivel 3 (CSRF Synchronizer Token + Ofuscación de URL sin exponer IDs)
  */
@@ -30,8 +30,6 @@ export function setRestauranteRef(ref) {
 }
 
 export function getRestauranteRef() {
-  if (currentRestauranteRef) return currentRestauranteRef;
-  // Si la URL es /c/<token_opaco>, extrae el token y limpia la barra de direcciones a /carta
   const match = window.location.pathname.match(/^\/c\/([a-zA-Z0-9_-]{24,128})$/);
   if (match) {
     currentRestauranteRef = match[1];
@@ -71,7 +69,7 @@ export async function apiFetch(endpoint, { method = 'GET', body = null, timeoutM
     headers['X-CSRF-Token'] = getCsrfToken();
   }
 
-  let payload = undefined;
+  let payload;
   if (body !== null && body !== undefined) {
     headers['Content-Type'] = 'application/json; charset=utf-8';
     payload = JSON.stringify(body);
@@ -86,7 +84,9 @@ export async function apiFetch(endpoint, { method = 'GET', body = null, timeoutM
       signal: controller.signal
     });
 
-    const json = await response.json().catch(() => ({ ok: false, error: { message: 'Respuesta inválida del servidor' } }));
+    const json = await response
+      .json()
+      .catch(() => ({ ok: false, error: { message: 'Respuesta inválida del servidor' } }));
 
     if (json?.data?.csrfToken) {
       setCsrfToken(json.data.csrfToken);
