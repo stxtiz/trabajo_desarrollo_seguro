@@ -4,6 +4,7 @@
   "description": "Backend API MVC para Carta Digital PNK Security - Node.js + Express + PostgreSQL (OWASP ASVS v5.0 Nivel 3)",
   "main": "src/server.js",
   "type": "commonjs",
+  "packageManager": "pnpm@12.18.0",
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",

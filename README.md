@@ -1,7 +1,7 @@
-# Carta Digital — PNK Security (v2.0)
-## Arquitectura Separada Front-End & Back-End MVC | Node.js + Express + PostgreSQL | OWASP ASVS v5.0 Nivel 3
+# Carta Digital — PNK Security (v3.0)
+## Arquitectura Separada Front-End (React 19 + Vite + Express + pnpm) & Back-End MVC (Node.js + Express + PostgreSQL + pnpm) | OWASP ASVS v5.0 Nivel 3
 
-Proyecto reconstruido desde cero eliminando PHP legado, MySQL, jQuery y `$.ajax`, conservando **100% idéntico el diseño visual de la interfaz web**, aplicando **ofuscación criptográfica de URLs e IDs** (`/carta`, `/carrito`, tokens `AES-256-CTR + HMAC-SHA256`) y separando físicamente los **3 ambientes en 3 ramas independientes (`desarrollo`, `qa` y `produccion`)**.
+Proyecto reconstruido desde cero eliminando PHP legado, MySQL, jQuery y `$.ajax`, migrado a **React 19 + Vite + React Router + pnpm** en el Front-End (servido en producción por Express endurecido) y **Node.js + Express MVC + pnpm** en el Back-End, conservando **100% idéntico el diseño visual de la interfaz web**, aplicando **ofuscación criptográfica de URLs e IDs** (`/carta`, `/carrito`, tokens `AES-256-CTR + HMAC-SHA256`) y separando físicamente los **3 ambientes en 3 ramas independientes (`desarrollo`, `qa` y `produccion`)**.
 
 ---
 

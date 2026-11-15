@@ -1,6 +1,6 @@
 # =============================================================================
-# AMBIENTE 1: DESARROLLO (docker-compose.dev.yml)
-# Stack: Front-End (Node/Express ES2024) + Back-End (Node/Express MVC) + PostgreSQL 16
+# AMBIENTE 1: DESARROLLO (docker-compose.yml)
+# Stack: Front-End (React 19 + Vite + Express + pnpm) + Back-End (Node/Express MVC + pnpm) + PostgreSQL 16
 # =============================================================================
 services:
   db-dev:

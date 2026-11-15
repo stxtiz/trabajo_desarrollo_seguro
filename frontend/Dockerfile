@@ -1,10 +1,21 @@
 # =============================================================================
-# DOCKERFILE FRONTEND - NODE.JS + EXPRESS (OWASP ASVS v5.0 NIVEL 3)
+# DOCKERFILE FRONTEND - REACT 19 + VITE + EXPRESS + PNPM (OWASP ASVS v5.0 NIVEL 3)
 # =============================================================================
-FROM node:22-alpine AS deps
+FROM node:22-alpine AS builder
 WORKDIR /app
-COPY package*.json ./
-RUN npm install --omit=dev && npm cache clean --force
+RUN corepack enable && corepack prepare pnpm@12.18.0 --activate
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile
+COPY vite.config.js index.html ./
+COPY src ./src
+COPY public ./public
+RUN pnpm run build
+
+FROM node:22-alpine AS prod-deps
+WORKDIR /app
+RUN corepack enable && corepack prepare pnpm@12.18.0 --activate
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN pnpm install --prod --frozen-lockfile
 
 FROM node:22-alpine AS runner
 WORKDIR /app
@@ -15,7 +26,8 @@ ENV NODE_ENV=production \
 RUN apk add --no-cache curl dumb-init && \
     chown -R node:node /app
 
-COPY --from=deps --chown=node:node /app/node_modules ./node_modules
+COPY --from=prod-deps --chown=node:node /app/node_modules ./node_modules
+COPY --from=builder --chown=node:node /app/dist ./dist
 COPY --chown=node:node src ./src
 COPY --chown=node:node public ./public
 COPY --chown=node:node package.json ./package.json
