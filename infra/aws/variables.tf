@@ -116,3 +116,9 @@ variable "asg_max_size" {
   type        = number
   default     = 3
 }
+
+variable "iam_instance_profile" {
+  description = "Nombre opcional de Instance Profile IAM preexistente para EC2 (ej. 'LabInstanceProfile' en AWS Academy si se requiere). Vacío por defecto para no invocar iam:CreateRole ni iam:PassRole."
+  type        = string
+  default     = ""
+}

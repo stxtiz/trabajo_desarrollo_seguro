@@ -29,12 +29,21 @@ fi
 echo "[1/4] Verificando credenciales activas de AWS CLI..."
 if ! aws sts get-caller-identity >/dev/null 2>&1; then
   echo ""
-  echo "[ERROR] No hay credenciales activas de AWS configuradas."
-  echo "Ejecuta 'aws configure' e ingresa:"
-  echo "  - AWS Access Key ID:     <tu Access Key de IAM>"
-  echo "  - AWS Secret Access Key: <tu Secret Key de IAM>"
-  echo "  - Default region name:   us-east-1"
-  echo "  - Default output format: json"
+  echo "[ERROR] No hay credenciales activas de AWS configuradas o el token temporal expiró."
+  echo ""
+  echo "Si usas AWS Academy Learner Lab (LabStudent / LabRole):"
+  echo "  1. Verifica en el portal que el laboratorio esté activo ('Start Lab' en verde)."
+  echo "  2. Haz clic en 'AWS Details' -> 'AWS CLI: Show' -> 'Copy'."
+  echo "  3. Pega el bloque [default] completo (aws_access_key_id, aws_secret_access_key y"
+  echo "     aws_session_token) en ~/.aws/credentials (mkdir -p ~/.aws && chmod 600 ~/.aws/credentials)."
+  echo "     (IMPORTANTE: 'aws configure' NO pide aws_session_token; sin él falla con InvalidClientTokenId)."
+  echo "     (Si apareció ExpiredToken tras ~4h, vuelve a copiar credenciales frescas desde AWS Details)."
+  echo "  4. Verifica que la región sea us-east-1 (requerida por Learner Lab):"
+  echo "       aws configure set region us-east-1"
+  echo "       export AWS_DEFAULT_REGION=us-east-1"
+  echo "  5. Alternativa sin copiar llaves: ejecuta ./1-desplegar-aws.sh desde AWS CloudShell (us-east-1)."
+  echo ""
+  echo "Si usas una cuenta AWS personal estándar: ejecuta 'aws configure' (región us-east-1)."
   exit 1
 fi
 
