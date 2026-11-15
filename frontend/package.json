@@ -1,10 +1,13 @@
 {
   "name": "pnk-carta-digital-frontend",
-  "version": "2.0.0",
-  "description": "Frontend desacoplado para Carta Digital PNK Security - Node.js + Express + Vanilla ES2024 Fetch API (OWASP ASVS v5.0 Nivel 3)",
+  "version": "3.0.0",
+  "description": "Frontend desacoplado para Carta Digital PNK Security - React 19 + Vite + Express (OWASP ASVS v5.0 Nivel 3)",
   "main": "src/server.js",
   "type": "commonjs",
+  "packageManager": "pnpm@12.18.0",
   "scripts": {
+    "build": "vite build",
+    "dev:vite": "vite",
     "start": "node src/server.js",
     "dev": "node --watch src/server.js"
   },
@@ -15,6 +18,13 @@
     "compression": "^1.7.5",
     "express": "^4.21.2",
     "helmet": "^8.0.0",
-    "http-proxy-middleware": "^3.0.3"
+    "http-proxy-middleware": "^3.0.3",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-router-dom": "^7.5.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.4.1",
+    "vite": "^6.3.5"
   }
 }

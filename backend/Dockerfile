@@ -4,9 +4,11 @@
 # =============================================================================
 FROM node:22-alpine AS deps
 WORKDIR /app
-RUN apk add --no-cache python3 make g++
-COPY package*.json ./
-RUN npm install --omit=dev && npm cache clean --force
+RUN apk add --no-cache python3 make g++ && \
+    corepack enable && \
+    corepack prepare pnpm@12.18.0 --activate
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN pnpm install --prod --frozen-lockfile
 
 FROM node:22-alpine AS runner
 WORKDIR /app
