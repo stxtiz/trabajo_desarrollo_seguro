@@ -41,6 +41,51 @@ async function query(text, params = []) {
   return pool.query(text, params);
 }
 
+let schemaReadyPromise = null;
+
+/**
+ * Migración idempotente al arranque para actualizar volúmenes PostgreSQL existentes sin pérdida de datos
+ */
+async function ensureSchema() {
+  if (!schemaReadyPromise) {
+    schemaReadyPromise = (async () => {
+      const statements = [
+        `ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS rol VARCHAR(20) NOT NULL DEFAULT 'user'`,
+        `UPDATE usuarios SET rol = 'admin' WHERE LOWER(email) = 'admin@gmail.com' AND rol <> 'admin'`,
+        `ALTER TABLE restaurantes ADD COLUMN IF NOT EXISTS foto_data TEXT DEFAULT NULL`,
+        `ALTER TABLE cartas ADD COLUMN IF NOT EXISTS foto_data TEXT DEFAULT NULL`,
+        `ALTER TABLE categorias ADD COLUMN IF NOT EXISTS foto_data TEXT DEFAULT NULL`,
+        `ALTER TABLE items ADD COLUMN IF NOT EXISTS foto_data TEXT DEFAULT NULL`
+      ];
+      for (const sql of statements) {
+        await pool.query(sql);
+      }
+    })().catch((err) => {
+      schemaReadyPromise = null;
+      throw err;
+    });
+  }
+  return schemaReadyPromise;
+}
+
+/**
+ * Ejecuta una función dentro de una transacción PostgreSQL (BEGIN / COMMIT / ROLLBACK)
+ */
+async function withTransaction(callback) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await callback(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 async function checkHealth() {
   const res = await pool.query('SELECT 1 AS ok');
   return res.rows[0]?.ok === 1;
@@ -49,5 +94,7 @@ async function checkHealth() {
 module.exports = {
   pool,
   query,
+  withTransaction,
+  ensureSchema,
   checkHealth
 };

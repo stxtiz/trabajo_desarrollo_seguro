@@ -3,10 +3,17 @@
 const db = require('../config/database');
 
 class UsuarioModel {
+  static resolveRol(row) {
+    if (!row) return 'user';
+    const rawRol = String(row.rol || '').trim().toLowerCase();
+    const isAdminEmail = String(row.email || '').trim().toLowerCase() === 'admin@gmail.com';
+    return (rawRol === 'admin' || isAdminEmail) ? 'admin' : 'user';
+  }
+
   static async buscarPorEmail(email) {
     const normalizedEmail = String(email || '').trim().toLowerCase();
     const res = await db.query(
-      `SELECT id, nombre, email, password, estado, intentos_fallidos, bloqueado_hasta
+      `SELECT id, nombre, email, password, rol, estado, intentos_fallidos, bloqueado_hasta
        FROM usuarios
        WHERE LOWER(email) = $1
        LIMIT 1`,

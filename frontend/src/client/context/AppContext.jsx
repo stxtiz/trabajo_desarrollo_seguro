@@ -4,8 +4,9 @@ import { apiFetch, getRestauranteRef, setRestauranteRef } from '../services/apiC
 const AppContext = createContext(null);
 
 export function AppProvider({ children }) {
-  const [sesion, setSesion] = useState({ autenticado: false, nombre: null, csrfToken: null });
+  const [sesion, setSesion] = useState({ autenticado: false, nombre: null, rol: null, csrfToken: null });
   const [restaurante, setRestaurante] = useState(null);
+  const [restaurantes, setRestaurantes] = useState([]);
   const [restauranteRef, setRestauranteRefState] = useState(() => getRestauranteRef());
   const [destacados, setDestacados] = useState([]);
   const [cartas, setCartas] = useState([]);
@@ -38,8 +39,11 @@ export function AppProvider({ children }) {
     setErrorCarta(null);
     try {
       const data = await apiFetch('/api/v1/carta');
-      setSesion(data.sesion || { autenticado: false, nombre: null, csrfToken: null });
+      setSesion(data.sesion || { autenticado: false, nombre: null, rol: null, csrfToken: null });
       setRestaurante(data.restaurante || null);
+      if (Array.isArray(data.restaurantes)) {
+        setRestaurantes(data.restaurantes);
+      }
       if (data.restaurante?.ref) {
         setRestauranteRefState(data.restaurante.ref);
       }
@@ -130,15 +134,26 @@ export function AppProvider({ children }) {
 
   const cambiarRestaurante = useCallback(
     async (newRef) => {
+      if (!newRef) return;
+      await apiFetch('/api/v1/restaurantes/seleccionar', {
+        method: 'POST',
+        body: { restauranteRef: newRef }
+      });
+      setCarritoItems([]);
+      setCarritoRestaurante(null);
       await recargarCarta(newRef);
     },
     [recargarCarta]
   );
 
+  const isAdmin = Boolean(sesion?.autenticado && sesion?.rol === 'admin');
+
   const value = useMemo(
     () => ({
       sesion,
+      isAdmin,
       restaurante,
+      restaurantes,
       restauranteRef,
       destacados,
       cartas,
@@ -164,7 +179,9 @@ export function AppProvider({ children }) {
     }),
     [
       sesion,
+      isAdmin,
       restaurante,
+      restaurantes,
       restauranteRef,
       destacados,
       cartas,
