@@ -581,10 +581,20 @@ Desde la carpeta `infra/aws`:
   ```
   *(O `.\2-destruir-aws.ps1 -Force` para omitir la confirmación interactiva).*
 
-### Qué hace Script 2
-1. Ejecuta `terraform destroy -auto-approve`.
-2. Elimina los archivos temporales locales generados durante el despliegue (`pnk-ec2-deploy-key.pem` y `outputs-despliegue.json`).
-3. Confirma en consola que toda la infraestructura fue destruida (`$0 en cargos continuos de AWS`).
+### Qué hace Script 2 (100% Stateless-Proof / a prueba de pérdida de sesión)
+1. **Paso 1 — Terraform Destroy (si existe estado local):** Si `terraform.tfstate` existe y no está vacío, ejecuta `terraform destroy -auto-approve`. Si cerraste AWS CloudShell, expiró tu sesión o clonaste el repositorio en una carpeta nueva sin `terraform.tfstate`, el script **no se detiene**: omite Terraform y pasa automáticamente al Paso 2.
+2. **Paso 2 — Barrido directo por AWS CLI (Stateless Sweep):** Consulta directamente la API de AWS (`us-east-1`) por el prefijo `pnk-carta-digital` y elimina en el orden exacto de dependencias el 100% de los recursos existentes (tengan o no `terraform.tfstate` local):
+   - Auto Scaling Group (`pnk-carta-digital-asg --force-delete`) y Launch Templates (`pnk-carta-digital-lt-*`).
+   - Instancias EC2 (`pnk-carta-digital*` o dentro de la VPC) esperando estado `terminated`.
+   - Application Load Balancer (`pnk-carta-digital-alb`) y Target Group (`pnk-carta-digital-tg`).
+   - Elastic IPs (`pnk-carta-digital*`, desasociando y liberando cada asignación).
+   - Amazon RDS PostgreSQL (`pnk-carta-digital-postgres`, desactivando `deletion-protection` y borrando sin snapshot final) y DB Subnet Group (`pnk-carta-digital-rds-subnet-group`).
+   - Par de llaves SSH (`pnk-carta-digital-deploy-key`).
+   - ENIs residuales, Security Groups no-default (revocando reglas cruzadas primero), Subredes, Route Tables, Internet Gateways y la VPC (`pnk-carta-digital-vpc`).
+3. **Paso 3 — Limpieza local:** Elimina `terraform.tfstate`, `terraform.tfstate.backup`, `pnk-ec2-deploy-key.pem` y `outputs-despliegue.json`, dejando todo listo para futuros despliegues limpios (`$0 en cargos continuos de AWS`).
+
+> [!NOTE]
+> Si además ejecutas **Script 1** (`./1-desplegar-aws.sh` o `.\1-desplegar-aws.ps1`) sin `terraform.tfstate` local mientras existen recursos huérfanos `pnk-carta-digital-*` en AWS, Script 1 los detectará automáticamente y te ofrecerá invocar Script 2 (`-y` / `-Force`) antes de desplegar para evitar errores de recursos duplicados.
 
 > [!TIP]
 > Como buena práctica adicional, puedes abrir brevemente en la Consola de AWS (región `us-east-1`): **EC2 -> Instances**, **EC2 -> Load Balancers**, **EC2 -> Elastic IPs** y **RDS -> Databases** para confirmar visualmente que ya no queda ningún recurso activo. En Cloudflare puedes dejar el Worker o eliminarlo desde **Settings -> Delete** (el plan gratuito de Cloudflare Workers no tiene cobro mensual).
