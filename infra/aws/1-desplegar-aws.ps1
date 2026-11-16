@@ -1,12 +1,28 @@
 ﻿# =============================================================================
-# SCRIPT 1: DESPLIEGUE COMPLETO DESDE CERO EN AWS (TERRAFORM + AWS CLI)
+# SCRIPT 1: DESPLIEGUE COMPLETO EN AWS (TERRAFORM + AWS CLI)
 # Proyecto: Carta Digital PNK Security (OWASP ASVS v5.0 Nivel 3)
-# Uso: .\1-desplegar-aws.ps1          (pide confirmacion si hay recursos huerfanos)
-#      .\1-desplegar-aws.ps1 -Force   (limpia huerfanos sin terraform.tfstate automaticamente)
+# Uso: .\1-desplegar-aws.ps1               (interactivo: pregunta por RDS)
+#      .\1-desplegar-aws.ps1 -Force        (no interactivo; reutiliza RDS si existe)
+#      .\1-desplegar-aws.ps1 -KeepRds      (conserva y reutiliza RDS existente)
+#      .\1-desplegar-aws.ps1 -DeleteRds    (elimina RDS existente y recrea desde cero)
+#      .\1-desplegar-aws.ps1 -WithoutRds   (despliega sin RDS, con PostgreSQL local en Docker)
 # =============================================================================
 param(
-    [switch]$Force
+    [switch]$Force,
+    [switch]$KeepRds,
+    [switch]$DeleteRds,
+    [switch]$WithRds,
+    [switch]$WithoutRds
 )
+
+if ($KeepRds -and $DeleteRds) {
+    Write-Host "[ERROR] No puedes usar -KeepRds y -DeleteRds al mismo tiempo." -ForegroundColor Red
+    exit 1
+}
+if ($WithRds -and $WithoutRds) {
+    Write-Host "[ERROR] No puedes usar -WithRds y -WithoutRds al mismo tiempo." -ForegroundColor Red
+    exit 1
+}
 
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
@@ -95,45 +111,166 @@ if ($identityExit -ne 0) {
 $identity = $identityJson | ConvertFrom-Json
 Write-Host "  Cuenta AWS verificada: $($identity.Account) ($($identity.Arn))" -ForegroundColor Green
 
-# 2b. Verificar si existen recursos huerfanos en AWS sin terraform.tfstate local
+# 2b. Verificar estado de Amazon RDS y recursos previos en AWS
 $hasLocalState = (Test-Path "terraform.tfstate") -and ((Get-Item "terraform.tfstate").Length -gt 0) -and (Select-String -Path "terraform.tfstate" -Pattern '"type":' -Quiet)
-if (-not $hasLocalState) {
-    $orphans = @()
-    $existingVpc = Invoke-AwsCheck -AwsArgs @("ec2", "describe-vpcs", "--region", $TargetRegion, "--filters", "Name=tag:Name,Values=$ProjectPrefix-vpc", "--query", "Vpcs[0].VpcId", "--output", "text")
-    if ($existingVpc) { $orphans += "VPC($existingVpc)" }
 
-    $existingKey = Invoke-AwsCheck -AwsArgs @("ec2", "describe-key-pairs", "--region", $TargetRegion, "--key-names", "$ProjectPrefix-deploy-key", "--query", "KeyPairs[0].KeyName", "--output", "text")
-    if ($existingKey) { $orphans += "KeyPair($existingKey)" }
+$rdsId = "$ProjectPrefix-postgres"
+$existingRdsStatus = Invoke-AwsCheck -AwsArgs @("rds", "describe-db-instances", "--region", $TargetRegion, "--db-instance-identifier", $rdsId, "--query", "DBInstances[0].DBInstanceStatus", "--output", "text")
+$existingVpc = Invoke-AwsCheck -AwsArgs @("ec2", "describe-vpcs", "--region", $TargetRegion, "--filters", "Name=tag:Name,Values=$ProjectPrefix-vpc", "Name=state,Values=available", "--query", "Vpcs[0].VpcId", "--output", "text")
 
-    $existingRds = Invoke-AwsCheck -AwsArgs @("rds", "describe-db-instances", "--region", $TargetRegion, "--db-instance-identifier", "$ProjectPrefix-postgres", "--query", "DBInstances[0].DBInstanceIdentifier", "--output", "text")
-    if ($existingRds) { $orphans += "RDS($existingRds)" }
+$createRds = $true
+$reuseExistingRds = $false
+$reuseDbPass = ""
 
-    $existingAlb = Invoke-AwsCheck -AwsArgs @("elbv2", "describe-load-balancers", "--region", $TargetRegion, "--names", "$ProjectPrefix-alb", "--query", "LoadBalancers[0].LoadBalancerName", "--output", "text")
-    if ($existingAlb) { $orphans += "ALB($existingAlb)" }
+function New-RdsSyncPassword {
+    $bytes = New-Object byte[] 16
+    [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+    return (-join ($bytes | ForEach-Object { $_.ToString("x2") }))
+}
 
-    $existingAsg = Invoke-AwsCheck -AwsArgs @("autoscaling", "describe-auto-scaling-groups", "--region", $TargetRegion, "--auto-scaling-group-names", "$ProjectPrefix-asg", "--query", "AutoScalingGroups[0].AutoScalingGroupName", "--output", "text")
-    if ($existingAsg) { $orphans += "ASG($existingAsg)" }
+if ($existingRdsStatus -eq "deleting") {
+    Write-Host ""
+    Write-Host "[AVISO] La instancia Amazon RDS '$rdsId' esta actualmente en estado 'deleting'." -ForegroundColor Yellow
+    Write-Host "        Esperando a que finalice su eliminacion para continuar..."
+    $null = Invoke-AwsCheck -AwsArgs @("rds", "wait", "db-instance-deleted", "--region", $TargetRegion, "--db-instance-identifier", $rdsId)
+    $existingRdsStatus = ""
+}
 
-    if ($orphans.Count -gt 0) {
-        Write-Host ""
-        Write-Host "[AVISO] No hay 'terraform.tfstate' local, pero ya existen recursos previos en AWS ($TargetRegion):" -ForegroundColor Yellow
-        Write-Host "        $($orphans -join ', ')" -ForegroundColor Yellow
-        Write-Host "        (Esto ocurre si se perdio la sesion anterior o se clono el repo en otra carpeta.)"
-        Write-Host "        Terraform fallara con errores de recursos duplicados si no se limpian primero."
-        if ($Force) {
-            Write-Host "  Limpiando automaticamente recursos huerfanos con .\2-destruir-aws.ps1 -Force..." -ForegroundColor Cyan
-            & (Join-Path $PSScriptRoot "2-destruir-aws.ps1") -Force
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+if (-not [string]::IsNullOrWhiteSpace($existingRdsStatus)) {
+    Write-Host ""
+    Write-Host "[RDS DETECTADO] Se encontro una instancia Amazon RDS existente: $rdsId (estado: $existingRdsStatus)." -ForegroundColor Cyan
+
+    $rdsAction = ""
+    if ($KeepRds) {
+        $rdsAction = "keep"
+    } elseif ($DeleteRds) {
+        $rdsAction = "delete"
+    } elseif ($Force) {
+        $rdsAction = "keep"
+        Write-Host "  Modo automatico (-Force): conservando y reutilizando RDS existente ($rdsId)." -ForegroundColor Green
+    } else {
+        Write-Host "¿Deseas ELIMINAR el RDS existente para recrearlo desde cero, o CONSERVARLO para reutilizarlo?" -ForegroundColor Yellow
+        Write-Host "  - 'N' (Por defecto - Recomendado): Conserva el RDS actual (mantiene tus datos) y su VPC,"
+        Write-Host "    limpia solo EC2/ALB/ASG previos y levanta todo rapido (~2-3 min)."
+        Write-Host "  - 's': Elimina el RDS actual y recrea toda la infraestructura desde cero (~10 min; BORRA datos)."
+        $rdsDelConfirm = Read-Host "¿Eliminar el RDS existente? [s/N]"
+        if ($rdsDelConfirm -in @("s", "S", "si", "SI", "y", "Y", "yes", "YES")) {
+            $rdsAction = "delete"
         } else {
-            $cleanConfirm = Read-Host "¿Deseas ejecutar '.\2-destruir-aws.ps1 -Force' ahora para limpiar los recursos previos y continuar? [s/N]"
-            if ($cleanConfirm -in @("s", "S", "si", "SI", "y", "Y", "yes", "YES")) {
-                & (Join-Path $PSScriptRoot "2-destruir-aws.ps1") -Force
-                if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $rdsAction = "keep"
+        }
+    }
+
+    if ($rdsAction -eq "keep") {
+        $albSgOk = ""
+        $ec2SgOk = ""
+        $pubSubnetCount = 0
+        if ($existingVpc) {
+            $albSgOk = Invoke-AwsCheck -AwsArgs @("ec2", "describe-security-groups", "--region", $TargetRegion, "--filters", "Name=vpc-id,Values=$existingVpc", "Name=group-name,Values=$ProjectPrefix-alb-sg", "--query", "SecurityGroups[0].GroupId", "--output", "text")
+            $ec2SgOk = Invoke-AwsCheck -AwsArgs @("ec2", "describe-security-groups", "--region", $TargetRegion, "--filters", "Name=vpc-id,Values=$existingVpc", "Name=group-name,Values=$ProjectPrefix-ec2-sg", "--query", "SecurityGroups[0].GroupId", "--output", "text")
+            $cntTxt = Invoke-AwsCheck -AwsArgs @("ec2", "describe-subnets", "--region", $TargetRegion, "--filters", "Name=vpc-id,Values=$existingVpc", "Name=tag:Tier,Values=public", "--query", "length(Subnets)", "--output", "text")
+            if ($cntTxt -match '^\d+$') { $pubSubnetCount = [int]$cntTxt }
+        }
+
+        if (-not $existingVpc -or -not $albSgOk -or -not $ec2SgOk -or $pubSubnetCount -lt 2) {
+            Write-Host "[AVISO] No se encontro la VPC o Security Groups completos necesarios para reutilizar $rdsId." -ForegroundColor Yellow
+            if ($Force) {
+                Write-Host "[ERROR] Red base incompleta para reutilizar RDS en modo automatico." -ForegroundColor Red
+                exit 1
+            }
+            $recreateConfirm = Read-Host "¿Deseas ejecutar '.\2-destruir-aws.ps1 -Force -DeleteRds' para limpiar todo y recrear desde cero? [s/N]"
+            if ($recreateConfirm -in @("s", "S", "si", "SI", "y", "Y", "yes", "YES")) {
+                $rdsAction = "delete"
             } else {
-                Write-Host "Despliegue cancelado. Ejecuta '.\2-destruir-aws.ps1' manualmente antes de volver a desplegar."
+                Write-Host "Despliegue cancelado."
                 exit 1
             }
         }
+    }
+
+    if ($rdsAction -eq "keep") {
+        Write-Host ""
+        Write-Host "  Preparando reutilizacion de Amazon RDS ($rdsId) en VPC $existingVpc..." -ForegroundColor Cyan
+        & (Join-Path $PSScriptRoot "2-destruir-aws.ps1") -Force -KeepRds
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+        $currRdsStatus = Invoke-AwsCheck -AwsArgs @("rds", "describe-db-instances", "--region", $TargetRegion, "--db-instance-identifier", $rdsId, "--query", "DBInstances[0].DBInstanceStatus", "--output", "text")
+        if ($currRdsStatus -ne "available") {
+            Write-Host "  Esperando a que Amazon RDS ($rdsId) alcance estado 'available' (actual: $currRdsStatus)..."
+            $null = & aws rds wait db-instance-available --region $TargetRegion --db-instance-identifier $rdsId
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        }
+
+        $reuseDbPass = New-RdsSyncPassword
+        Write-Host "  Sincronizando credencial de conexion en Amazon RDS ($rdsId)..."
+        $null = & aws rds modify-db-instance --region $TargetRegion --db-instance-identifier $rdsId --master-user-password $reuseDbPass --apply-immediately
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        Write-Host "  Esperando confirmacion de Amazon RDS (~30-45 seg)..."
+        Start-Sleep -Seconds 10
+        $null = & aws rds wait db-instance-available --region $TargetRegion --db-instance-identifier $rdsId
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+        $reuseExistingRds = $true
+        $createRds = $true
+    } else {
+        Write-Host "  Eliminando infraestructura previa (incluyendo RDS) antes de recrear desde cero..." -ForegroundColor Yellow
+        & (Join-Path $PSScriptRoot "2-destruir-aws.ps1") -Force -DeleteRds
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        $reuseExistingRds = $false
+        $createRds = (-not $WithoutRds)
+    }
+} else {
+    if (-not $hasLocalState) {
+        $orphans = @()
+        if ($existingVpc) { $orphans += "VPC($existingVpc)" }
+
+        $existingKey = Invoke-AwsCheck -AwsArgs @("ec2", "describe-key-pairs", "--region", $TargetRegion, "--key-names", "$ProjectPrefix-deploy-key", "--query", "KeyPairs[0].KeyName", "--output", "text")
+        if ($existingKey) { $orphans += "KeyPair($existingKey)" }
+
+        $existingAlb = Invoke-AwsCheck -AwsArgs @("elbv2", "describe-load-balancers", "--region", $TargetRegion, "--names", "$ProjectPrefix-alb", "--query", "LoadBalancers[0].LoadBalancerName", "--output", "text")
+        if ($existingAlb) { $orphans += "ALB($existingAlb)" }
+
+        $existingAsg = Invoke-AwsCheck -AwsArgs @("autoscaling", "describe-auto-scaling-groups", "--region", $TargetRegion, "--auto-scaling-group-names", "$ProjectPrefix-asg", "--query", "AutoScalingGroups[0].AutoScalingGroupName", "--output", "text")
+        if ($existingAsg) { $orphans += "ASG($existingAsg)" }
+
+        if ($orphans.Count -gt 0) {
+            Write-Host ""
+            Write-Host "[AVISO] No hay 'terraform.tfstate' local, pero ya existen recursos previos en AWS ($TargetRegion):" -ForegroundColor Yellow
+            Write-Host "        $($orphans -join ', ')" -ForegroundColor Yellow
+            Write-Host "        (Esto ocurre si se perdio la sesion anterior o se clono el repo en otra carpeta.)"
+            Write-Host "        Terraform fallara con errores de recursos duplicados si no se limpian primero."
+            if ($Force) {
+                Write-Host "  Limpiando automaticamente recursos huerfanos con .\2-destruir-aws.ps1 -Force -DeleteRds..." -ForegroundColor Cyan
+                & (Join-Path $PSScriptRoot "2-destruir-aws.ps1") -Force -DeleteRds
+                if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            } else {
+                $cleanConfirm = Read-Host "¿Deseas ejecutar '.\2-destruir-aws.ps1 -Force -DeleteRds' ahora para limpiar los recursos previos y continuar? [s/N]"
+                if ($cleanConfirm -in @("s", "S", "si", "SI", "y", "Y", "yes", "YES")) {
+                    & (Join-Path $PSScriptRoot "2-destruir-aws.ps1") -Force -DeleteRds
+                    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                } else {
+                    Write-Host "Despliegue cancelado. Ejecuta '.\2-destruir-aws.ps1' manualmente antes de volver a desplegar."
+                    exit 1
+                }
+            }
+        }
+    }
+
+    if ($WithoutRds) {
+        $createRds = $false
+    } elseif ($WithRds) {
+        $createRds = $true
+    } elseif ($Force) {
+        $createRds = $true
+    } else {
+        Write-Host ""
+        Write-Host "No se detecto una instancia Amazon RDS activa ($rdsId) en $TargetRegion." -ForegroundColor Cyan
+        Write-Host "¿Deseas crear la base de datos Amazon RDS PostgreSQL en este despliegue?" -ForegroundColor Yellow
+        Write-Host "  - 'S' (Por defecto - Recomendado): Crea Amazon RDS PostgreSQL 16 en subred privada (~6-10 min)."
+        Write-Host "  - 'n': Despliega SIN Amazon RDS usando PostgreSQL en contenedor Docker local en EC2 (~2 min)."
+        Write-Host "         (Nota: sin RDS, cada EC2 usa su propia BD local en lugar de una BD compartida.)"
+        $createRdsConfirm = Read-Host "¿Crear Amazon RDS PostgreSQL? [S/n]"
+        $createRds = ($createRdsConfirm -notin @("n", "N", "no", "NO"))
     }
 }
 
@@ -150,10 +287,28 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 # 4. Detectar Instance Profile (AWS Academy LabInstanceProfile vs cuenta personal) y aplicar
 Write-Host ""
-Write-Host "[4/4] Creando VPC, Security Groups, RDS PostgreSQL 16, EIP, ALB y Auto Scaling Group (2 EC2 en 2 AZs)..."
-Write-Host "      (Esto suele tardar entre 6 y 10 minutos principalmente por Amazon RDS)" -ForegroundColor Yellow
+if ($reuseExistingRds) {
+    Write-Host "[4/4] Reutilizando VPC y Amazon RDS ($rdsId); creando EIP, ALB y Auto Scaling Group (2 EC2 en 2 AZs)..."
+    Write-Host "      (Despliegue rapido: suele tardar entre 2 y 3 minutos)" -ForegroundColor Yellow
+} elseif ($createRds) {
+    Write-Host "[4/4] Creando VPC, Security Groups, RDS PostgreSQL 16, EIP, ALB y Auto Scaling Group (2 EC2 en 2 AZs)..."
+    Write-Host "      (Esto suele tardar entre 6 y 10 minutos principalmente por Amazon RDS)" -ForegroundColor Yellow
+} else {
+    Write-Host "[4/4] Creando VPC, Security Groups, EIP, ALB y Auto Scaling Group sin Amazon RDS (PostgreSQL local en Docker)..."
+    Write-Host "      (Despliegue rapido: suele tardar entre 2 y 3 minutos)" -ForegroundColor Yellow
+}
 
-$tfApplyArgs = @("apply", "-auto-approve")
+$createRdsTf = if ($createRds) { "true" } else { "false" }
+$reuseRdsTf = if ($reuseExistingRds) { "true" } else { "false" }
+$tfApplyArgs = @(
+    "apply",
+    "-auto-approve",
+    "-var=create_rds=$createRdsTf",
+    "-var=reuse_existing_rds=$reuseRdsTf"
+)
+if (-not [string]::IsNullOrWhiteSpace($reuseDbPass)) {
+    $tfApplyArgs += "-var=db_password_override=$reuseDbPass"
+}
 if ($identity.Arn -match "voclabs|LabRole") {
     Write-Host "  Entorno AWS Academy detectado: usando iam_instance_profile=LabInstanceProfile." -ForegroundColor Gray
 } else {
@@ -246,7 +401,13 @@ Write-Host "    -> Distribuye trafico con CERO downtime entre 2 instancias EC2 (
 Write-Host "  Load Balancer URL (/carta)      : http://$ALB_DNS/carta"
 Write-Host "  Elastic IP fija (EIP, ASG)      : $EIP (instancia actual: $ASG_INSTANCE_ID)"
 Write-Host "  [Alternativa] Origin via EIP    : $CF_ORIGIN_EIP"
-Write-Host "  Amazon RDS Endpoint             : $RDS_ENDPOINT"
+if (-not $createRds) {
+    Write-Host "  Base de datos PostgreSQL        : Contenedor Docker local en EC2 (sin Amazon RDS)"
+} elseif ($reuseExistingRds) {
+    Write-Host "  Amazon RDS Endpoint (REUTILIZADO): $RDS_ENDPOINT" -ForegroundColor Green
+} else {
+    Write-Host "  Amazon RDS Endpoint             : $RDS_ENDPOINT"
+}
 Write-Host "  Llave SSH Privada (.pem)        : $SSH_KEY_PATH"
 Write-Host "  Comando SSH                     : $SSH_CMD"
 Write-Host "  Archivo de Outputs JSON         : infra/aws/outputs-despliegue.json"

@@ -1,17 +1,27 @@
 ﻿# =============================================================================
-# SCRIPT 2: DESTRUCCION TOTAL DE INFRAESTRUCTURA AWS (STATELESS + TERRAFORM)
+# SCRIPT 2: DESTRUCCION DE INFRAESTRUCTURA AWS (STATELESS + TERRAFORM)
 # Proyecto: Carta Digital PNK Security
-# Uso: .\2-destruir-aws.ps1          (pide confirmacion interactiva)
-#      .\2-destruir-aws.ps1 -Force   (sin confirmacion interactiva)
+# Uso: .\2-destruir-aws.ps1               (interactivo: pregunta si eliminar RDS)
+#      .\2-destruir-aws.ps1 -KeepRds      (conserva RDS y su VPC base)
+#      .\2-destruir-aws.ps1 -DeleteRds    (elimina todo, incluyendo RDS y VPC)
+#      .\2-destruir-aws.ps1 -Force [-KeepRds | -DeleteRds]
 #
 # Disenado a prueba de perdida de sesion (ej. sin terraform.tfstate local):
-#   1) Si existe terraform.tfstate local, ejecuta 'terraform destroy -auto-approve'.
+#   1) Si DeleteRds es true y existe terraform.tfstate local, ejecuta 'terraform destroy'.
 #   2) Siempre ejecuta un barrido directo por AWS CLI (Stateless Sweep) por prefijo
-#      'pnk-carta-digital' en orden de dependencias para garantizar $0 cobros.
+#      'pnk-carta-digital' en orden de dependencias. Si se conserva RDS, mantiene
+#      Amazon RDS y su VPC/Subredes/Security Groups para reutilizacion rapida.
 # =============================================================================
 param(
-    [switch]$Force
+    [switch]$Force,
+    [switch]$DeleteRds,
+    [switch]$KeepRds
 )
+
+if ($DeleteRds -and $KeepRds) {
+    Write-Host "[ERROR] No puedes usar -DeleteRds y -KeepRds al mismo tiempo." -ForegroundColor Red
+    exit 1
+}
 
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
@@ -100,17 +110,51 @@ if ($identityCheck.ExitCode -ne 0) {
     exit 1
 }
 
+$rdsId = "$ProjectPrefix-postgres"
+$existingRdsRes = Invoke-AwsSafe -AwsArgs @("rds", "describe-db-instances", "--region", $TargetRegion, "--db-instance-identifier", $rdsId, "--query", "DBInstances[0].DBInstanceStatus", "--output", "text")
+$existingRdsStatus = (ConvertTo-UniqueIds -RawTexts @($existingRdsRes.Output)) | Select-Object -First 1
+
+$shouldDeleteRds = $true
+if ($KeepRds) {
+    $shouldDeleteRds = $false
+} elseif ($DeleteRds) {
+    $shouldDeleteRds = $true
+} elseif ($Force) {
+    $shouldDeleteRds = $true
+} else {
+    Write-Host ""
+    if ($existingRdsRes.ExitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace($existingRdsStatus)) {
+        Write-Host "Base de datos Amazon RDS detectada en ${TargetRegion}: $rdsId (estado: $existingRdsStatus)" -ForegroundColor Cyan
+    } else {
+        Write-Host "No se detecto una instancia Amazon RDS activa ($rdsId) en $TargetRegion." -ForegroundColor Gray
+    }
+    Write-Host "¿Deseas eliminar tambien la base de datos Amazon RDS ($rdsId)?" -ForegroundColor Yellow
+    Write-Host "  - 's': Elimina TODO, incluyendo Amazon RDS y la VPC completa (~5-8 min; BORRA tus datos)."
+    Write-Host "  - 'N' (Por defecto): Conserva Amazon RDS y su VPC/Subredes/Security Groups base"
+    Write-Host "    para reutilizarlos rapido en el proximo despliegue (~45 seg; MANTIENE tus datos)."
+    $rdsConfirm = Read-Host "¿Eliminar Amazon RDS? [s/N]"
+    $shouldDeleteRds = ($rdsConfirm -in @("s", "S", "si", "SI", "y", "Y", "yes", "YES"))
+}
+
 if (-not $Force) {
     Write-Host ""
-    Write-Host "ATENCION: Esta accion eliminara permanentemente TODOS los recursos '${ProjectPrefix}*' en ${TargetRegion}:" -ForegroundColor Red
-    Write-Host "  - Auto Scaling Group, Launch Templates e instancias EC2"
-    Write-Host "  - Application Load Balancer, Target Group y Elastic IP"
-    Write-Host "  - Base de datos Amazon RDS PostgreSQL (y sus datos) + DB Subnet Group"
-    Write-Host "  - Par de llaves SSH (${ProjectPrefix}-deploy-key)"
-    Write-Host "  - VPC, Subredes, ENIs, Route Tables, Internet Gateway y Security Groups"
-    Write-Host "  - Archivos locales de estado (terraform.tfstate, llave .pem y outputs JSON)"
+    if ($shouldDeleteRds) {
+        Write-Host "ATENCION: Esta accion eliminara permanentemente TODOS los recursos '${ProjectPrefix}*' en ${TargetRegion}:" -ForegroundColor Red
+        Write-Host "  - Auto Scaling Group, Launch Templates e instancias EC2"
+        Write-Host "  - Application Load Balancer, Target Group y Elastic IP"
+        Write-Host "  - Base de datos Amazon RDS PostgreSQL (y sus datos) + DB Subnet Group"
+        Write-Host "  - Par de llaves SSH (${ProjectPrefix}-deploy-key)"
+        Write-Host "  - VPC, Subredes, ENIs, Route Tables, Internet Gateway y Security Groups"
+        Write-Host "  - Archivos locales de estado (terraform.tfstate, llave .pem y outputs JSON)"
+    } else {
+        Write-Host "MODO CONSERVAR RDS: Se destruiran los recursos de computo/balanceo en ${TargetRegion}:" -ForegroundColor Cyan
+        Write-Host "  - [ELIMINAR] Auto Scaling Group, Launch Templates e instancias EC2"
+        Write-Host "  - [ELIMINAR] Application Load Balancer, Target Group y Elastic IP"
+        Write-Host "  - [ELIMINAR] Par de llaves SSH (${ProjectPrefix}-deploy-key) y estado local"
+        Write-Host "  - [CONSERVAR] Base de datos Amazon RDS ($rdsId) y su VPC/Subredes/Security Groups base" -ForegroundColor Green
+    }
     Write-Host ""
-    $confirm = Read-Host "¿Deseas continuar y destruir toda la infraestructura? [s/N]"
+    $confirm = Read-Host "¿Deseas continuar con la destruccion? [s/N]"
     if ($confirm -notin @("s", "S", "si", "SI", "y", "Y", "yes", "YES")) {
         Write-Host "Operacion cancelada. No se elimino ningun recurso."
         exit 0
@@ -118,12 +162,14 @@ if (-not $Force) {
 }
 
 # =============================================================================
-# PASO 1: TERRAFORM DESTROY (SI EXISTE terraform.tfstate LOCAL)
+# PASO 1: TERRAFORM DESTROY (SOLO SI SE ELIMINARA RDS Y EXISTE terraform.tfstate)
 # =============================================================================
 Write-Host ""
 Write-Host "[1/3] Verificando estado local de Terraform (terraform.tfstate)..."
 $hasState = (Test-Path "terraform.tfstate") -and ((Get-Item "terraform.tfstate").Length -gt 0)
-if ($hasState) {
+if (-not $shouldDeleteRds) {
+    Write-Host "  [CONSERVAR RDS] Omitiendo 'terraform destroy' para mantener intactos Amazon RDS y su VPC base." -ForegroundColor Green
+} elseif ($hasState) {
     if (Get-Command terraform -ErrorAction SilentlyContinue) {
         Write-Host "  terraform.tfstate encontrado. Ejecutando 'terraform destroy -auto-approve'..."
         $prevEap = $ErrorActionPreference
@@ -252,30 +298,33 @@ if ($eipAllocs.Count -gt 0) {
 }
 
 # 2.6. Amazon RDS PostgreSQL (pnk-carta-digital-postgres & pnk-carta-digital-rds-subnet-group)
-Write-Host "  [2.6] Buscando Amazon RDS PostgreSQL (${ProjectPrefix}-postgres)..."
-$rdsId = "$ProjectPrefix-postgres"
-$rdsRes = Invoke-AwsSafe -AwsArgs @("rds", "describe-db-instances", "--region", $TargetRegion, "--db-instance-identifier", $rdsId, "--query", "DBInstances[0].DBInstanceStatus", "--output", "text")
-$rdsStatus = (ConvertTo-UniqueIds -RawTexts @($rdsRes.Output)) | Select-Object -First 1
-if ($rdsRes.ExitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace($rdsStatus)) {
-    if ($rdsStatus -ne "deleting") {
-        Write-Host "        Deshabilitando deletion-protection (si aplica) en $rdsId..."
-        $null = Invoke-AwsSafe -AwsArgs @("rds", "modify-db-instance", "--region", $TargetRegion, "--db-instance-identifier", $rdsId, "--no-deletion-protection", "--apply-immediately")
-        Write-Host "        Eliminando instancia RDS $rdsId (sin final snapshot)..."
-        $null = Invoke-AwsSafe -AwsArgs @("rds", "delete-db-instance", "--region", $TargetRegion, "--db-instance-identifier", $rdsId, "--skip-final-snapshot", "--delete-automated-backups")
+if ($shouldDeleteRds) {
+    Write-Host "  [2.6] Buscando Amazon RDS PostgreSQL (${ProjectPrefix}-postgres)..."
+    $rdsRes = Invoke-AwsSafe -AwsArgs @("rds", "describe-db-instances", "--region", $TargetRegion, "--db-instance-identifier", $rdsId, "--query", "DBInstances[0].DBInstanceStatus", "--output", "text")
+    $rdsStatus = (ConvertTo-UniqueIds -RawTexts @($rdsRes.Output)) | Select-Object -First 1
+    if ($rdsRes.ExitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace($rdsStatus)) {
+        if ($rdsStatus -ne "deleting") {
+            Write-Host "        Deshabilitando deletion-protection (si aplica) en $rdsId..."
+            $null = Invoke-AwsSafe -AwsArgs @("rds", "modify-db-instance", "--region", $TargetRegion, "--db-instance-identifier", $rdsId, "--no-deletion-protection", "--apply-immediately")
+            Write-Host "        Eliminando instancia RDS $rdsId (sin final snapshot)..."
+            $null = Invoke-AwsSafe -AwsArgs @("rds", "delete-db-instance", "--region", $TargetRegion, "--db-instance-identifier", $rdsId, "--skip-final-snapshot", "--delete-automated-backups")
+        } else {
+            Write-Host "        La instancia RDS $rdsId ya estaba en estado 'deleting'."
+        }
+        Write-Host "        Esperando eliminacion completa de Amazon RDS (puede tardar varios minutos)..."
+        $null = Invoke-AwsSafe -AwsArgs @("rds", "wait", "db-instance-deleted", "--region", $TargetRegion, "--db-instance-identifier", $rdsId)
     } else {
-        Write-Host "        La instancia RDS $rdsId ya estaba en estado 'deleting'."
+        Write-Host "        Sin instancia RDS ($rdsId)."
     }
-    Write-Host "        Esperando eliminacion completa de Amazon RDS (puede tardar varios minutos)..."
-    $null = Invoke-AwsSafe -AwsArgs @("rds", "wait", "db-instance-deleted", "--region", $TargetRegion, "--db-instance-identifier", $rdsId)
-} else {
-    Write-Host "        Sin instancia RDS ($rdsId)."
-}
 
-$rdsSubnetGrp = "$ProjectPrefix-rds-subnet-group"
-$sgCheck = Invoke-AwsSafe -AwsArgs @("rds", "describe-db-subnet-groups", "--region", $TargetRegion, "--db-subnet-group-name", $rdsSubnetGrp)
-if ($sgCheck.ExitCode -eq 0) {
-    Write-Host "        Eliminando DB Subnet Group: $rdsSubnetGrp"
-    $null = Invoke-AwsSafe -AwsArgs @("rds", "delete-db-subnet-group", "--region", $TargetRegion, "--db-subnet-group-name", $rdsSubnetGrp)
+    $rdsSubnetGrp = "$ProjectPrefix-rds-subnet-group"
+    $sgCheck = Invoke-AwsSafe -AwsArgs @("rds", "describe-db-subnet-groups", "--region", $TargetRegion, "--db-subnet-group-name", $rdsSubnetGrp)
+    if ($sgCheck.ExitCode -eq 0) {
+        Write-Host "        Eliminando DB Subnet Group: $rdsSubnetGrp"
+        $null = Invoke-AwsSafe -AwsArgs @("rds", "delete-db-subnet-group", "--region", $TargetRegion, "--db-subnet-group-name", $rdsSubnetGrp)
+    }
+} else {
+    Write-Host "  [2.6] [CONSERVADO] Base de datos Amazon RDS ($rdsId) y DB Subnet Group conservados intactos." -ForegroundColor Green
 }
 
 # 2.7. SSH Key Pair (pnk-carta-digital-deploy-key)
@@ -283,95 +332,99 @@ Write-Host "  [2.7] Eliminando Key Pair SSH (${ProjectPrefix}-deploy-key) si exi
 $null = Invoke-AwsSafe -AwsArgs @("ec2", "delete-key-pair", "--region", $TargetRegion, "--key-name", "$ProjectPrefix-deploy-key")
 
 # 2.8. VPC, ENIs, Security Groups, Subnets, Route Tables e Internet Gateway
-Write-Host "  [2.8] Buscando VPC, Subredes, Route Tables, IGW y Security Groups (${ProjectPrefix}*)..."
-$vpcIds = Get-ProjectVpcIds
-if ($vpcIds.Count -gt 0) {
-    foreach ($vpcId in $vpcIds) {
-        Write-Host "        Limpiando VPC: $vpcId"
+if ($shouldDeleteRds) {
+    Write-Host "  [2.8] Buscando VPC, Subredes, Route Tables, IGW y Security Groups (${ProjectPrefix}*)..."
+    $vpcIds = Get-ProjectVpcIds
+    if ($vpcIds.Count -gt 0) {
+        foreach ($vpcId in $vpcIds) {
+            Write-Host "        Limpiando VPC: $vpcId"
 
-        # Esperar a que ENIs de ALB/RDS terminen de desacoplarse y limpiar ENIs disponibles
-        for ($waitI = 1; $waitI -le 12; $waitI++) {
-            $availEnis = ConvertTo-UniqueIds -RawTexts @((Invoke-AwsSafe -AwsArgs @("ec2", "describe-network-interfaces", "--region", $TargetRegion, "--filters", "Name=vpc-id,Values=$vpcId", "Name=status,Values=available", "--query", "NetworkInterfaces[].NetworkInterfaceId", "--output", "text")).Output)
-            foreach ($eni in $availEnis) {
-                Write-Host "          Eliminando ENI residual: $eni"
-                $null = Invoke-AwsSafe -AwsArgs @("ec2", "delete-network-interface", "--region", $TargetRegion, "--network-interface-id", $eni)
+            # Esperar a que ENIs de ALB/RDS terminen de desacoplarse y limpiar ENIs disponibles
+            for ($waitI = 1; $waitI -le 12; $waitI++) {
+                $availEnis = ConvertTo-UniqueIds -RawTexts @((Invoke-AwsSafe -AwsArgs @("ec2", "describe-network-interfaces", "--region", $TargetRegion, "--filters", "Name=vpc-id,Values=$vpcId", "Name=status,Values=available", "--query", "NetworkInterfaces[].NetworkInterfaceId", "--output", "text")).Output)
+                foreach ($eni in $availEnis) {
+                    Write-Host "          Eliminando ENI residual: $eni"
+                    $null = Invoke-AwsSafe -AwsArgs @("ec2", "delete-network-interface", "--region", $TargetRegion, "--network-interface-id", $eni)
+                }
+                $allEnis = ConvertTo-UniqueIds -RawTexts @((Invoke-AwsSafe -AwsArgs @("ec2", "describe-network-interfaces", "--region", $TargetRegion, "--filters", "Name=vpc-id,Values=$vpcId", "--query", "NetworkInterfaces[].NetworkInterfaceId", "--output", "text")).Output)
+                if ($allEnis.Count -eq 0) { break }
+                Write-Host "          Esperando liberacion de ENIs de red en $vpcId ($waitI/12)..."
+                Start-Sleep -Seconds 5
             }
-            $allEnis = ConvertTo-UniqueIds -RawTexts @((Invoke-AwsSafe -AwsArgs @("ec2", "describe-network-interfaces", "--region", $TargetRegion, "--filters", "Name=vpc-id,Values=$vpcId", "--query", "NetworkInterfaces[].NetworkInterfaceId", "--output", "text")).Output)
-            if ($allEnis.Count -eq 0) { break }
-            Write-Host "          Esperando liberacion de ENIs de red en $vpcId ($waitI/12)..."
-            Start-Sleep -Seconds 5
-        }
 
-        # Revocar reglas ingress/egress de Security Groups no-default (evita bloqueos por referencias cruzadas)
-        $sgIds = ConvertTo-UniqueIds -RawTexts @((Invoke-AwsSafe -AwsArgs @("ec2", "describe-security-groups", "--region", $TargetRegion, "--filters", "Name=vpc-id,Values=$vpcId", "--query", "SecurityGroups[?GroupName!='default'].GroupId", "--output", "text")).Output)
-        foreach ($sg in $sgIds) {
-            $ingRes = Invoke-AwsSafe -AwsArgs @("ec2", "describe-security-groups", "--region", $TargetRegion, "--group-ids", $sg, "--query", "SecurityGroups[0].IpPermissions", "--output", "json")
-            $ingFlat = ($ingRes.Output -replace '\s+', '')
-            if ($ingRes.ExitCode -eq 0 -and $ingFlat -and $ingFlat -ne "[]" -and $ingFlat -ne "null") {
-                $tmpIng = [System.IO.Path]::GetTempFileName()
-                try {
-                    Set-Content -Path $tmpIng -Value $ingRes.Output -Encoding Ascii
-                    $null = Invoke-AwsSafe -AwsArgs @("ec2", "revoke-security-group-ingress", "--region", $TargetRegion, "--group-id", $sg, "--ip-permissions", "file://$tmpIng")
-                } finally {
-                    Remove-Item -Path $tmpIng -Force -ErrorAction SilentlyContinue
+            # Revocar reglas ingress/egress de Security Groups no-default (evita bloqueos por referencias cruzadas)
+            $sgIds = ConvertTo-UniqueIds -RawTexts @((Invoke-AwsSafe -AwsArgs @("ec2", "describe-security-groups", "--region", $TargetRegion, "--filters", "Name=vpc-id,Values=$vpcId", "--query", "SecurityGroups[?GroupName!='default'].GroupId", "--output", "text")).Output)
+            foreach ($sg in $sgIds) {
+                $ingRes = Invoke-AwsSafe -AwsArgs @("ec2", "describe-security-groups", "--region", $TargetRegion, "--group-ids", $sg, "--query", "SecurityGroups[0].IpPermissions", "--output", "json")
+                $ingFlat = ($ingRes.Output -replace '\s+', '')
+                if ($ingRes.ExitCode -eq 0 -and $ingFlat -and $ingFlat -ne "[]" -and $ingFlat -ne "null") {
+                    $tmpIng = [System.IO.Path]::GetTempFileName()
+                    try {
+                        Set-Content -Path $tmpIng -Value $ingRes.Output -Encoding Ascii
+                        $null = Invoke-AwsSafe -AwsArgs @("ec2", "revoke-security-group-ingress", "--region", $TargetRegion, "--group-id", $sg, "--ip-permissions", "file://$tmpIng")
+                    } finally {
+                        Remove-Item -Path $tmpIng -Force -ErrorAction SilentlyContinue
+                    }
+                }
+
+                $egrRes = Invoke-AwsSafe -AwsArgs @("ec2", "describe-security-groups", "--region", $TargetRegion, "--group-ids", $sg, "--query", "SecurityGroups[0].IpPermissionsEgress", "--output", "json")
+                $egrFlat = ($egrRes.Output -replace '\s+', '')
+                if ($egrRes.ExitCode -eq 0 -and $egrFlat -and $egrFlat -ne "[]" -and $egrFlat -ne "null") {
+                    $tmpEgr = [System.IO.Path]::GetTempFileName()
+                    try {
+                        Set-Content -Path $tmpEgr -Value $egrRes.Output -Encoding Ascii
+                        $null = Invoke-AwsSafe -AwsArgs @("ec2", "revoke-security-group-egress", "--region", $TargetRegion, "--group-id", $sg, "--ip-permissions", "file://$tmpEgr")
+                    } finally {
+                        Remove-Item -Path $tmpEgr -Force -ErrorAction SilentlyContinue
+                    }
                 }
             }
 
-            $egrRes = Invoke-AwsSafe -AwsArgs @("ec2", "describe-security-groups", "--region", $TargetRegion, "--group-ids", $sg, "--query", "SecurityGroups[0].IpPermissionsEgress", "--output", "json")
-            $egrFlat = ($egrRes.Output -replace '\s+', '')
-            if ($egrRes.ExitCode -eq 0 -and $egrFlat -and $egrFlat -ne "[]" -and $egrFlat -ne "null") {
-                $tmpEgr = [System.IO.Path]::GetTempFileName()
-                try {
-                    Set-Content -Path $tmpEgr -Value $egrRes.Output -Encoding Ascii
-                    $null = Invoke-AwsSafe -AwsArgs @("ec2", "revoke-security-group-egress", "--region", $TargetRegion, "--group-id", $sg, "--ip-permissions", "file://$tmpEgr")
-                } finally {
-                    Remove-Item -Path $tmpEgr -Force -ErrorAction SilentlyContinue
+            for ($pass = 1; $pass -le 3; $pass++) {
+                $remSgs = ConvertTo-UniqueIds -RawTexts @((Invoke-AwsSafe -AwsArgs @("ec2", "describe-security-groups", "--region", $TargetRegion, "--filters", "Name=vpc-id,Values=$vpcId", "--query", "SecurityGroups[?GroupName!='default'].GroupId", "--output", "text")).Output)
+                if ($remSgs.Count -eq 0) { break }
+                foreach ($sg in $remSgs) {
+                    Write-Host "          Eliminando Security Group: $sg"
+                    $null = Invoke-AwsSafe -AwsArgs @("ec2", "delete-security-group", "--region", $TargetRegion, "--group-id", $sg)
                 }
             }
-        }
 
-        for ($pass = 1; $pass -le 3; $pass++) {
-            $remSgs = ConvertTo-UniqueIds -RawTexts @((Invoke-AwsSafe -AwsArgs @("ec2", "describe-security-groups", "--region", $TargetRegion, "--filters", "Name=vpc-id,Values=$vpcId", "--query", "SecurityGroups[?GroupName!='default'].GroupId", "--output", "text")).Output)
-            if ($remSgs.Count -eq 0) { break }
-            foreach ($sg in $remSgs) {
-                Write-Host "          Eliminando Security Group: $sg"
-                $null = Invoke-AwsSafe -AwsArgs @("ec2", "delete-security-group", "--region", $TargetRegion, "--group-id", $sg)
+            # Eliminar Subnets
+            $subnetIds = ConvertTo-UniqueIds -RawTexts @((Invoke-AwsSafe -AwsArgs @("ec2", "describe-subnets", "--region", $TargetRegion, "--filters", "Name=vpc-id,Values=$vpcId", "--query", "Subnets[].SubnetId", "--output", "text")).Output)
+            foreach ($subnet in $subnetIds) {
+                Write-Host "          Eliminando Subnet: $subnet"
+                $null = Invoke-AwsSafe -AwsArgs @("ec2", "delete-subnet", "--region", $TargetRegion, "--subnet-id", $subnet)
             }
-        }
 
-        # Eliminar Subnets
-        $subnetIds = ConvertTo-UniqueIds -RawTexts @((Invoke-AwsSafe -AwsArgs @("ec2", "describe-subnets", "--region", $TargetRegion, "--filters", "Name=vpc-id,Values=$vpcId", "--query", "Subnets[].SubnetId", "--output", "text")).Output)
-        foreach ($subnet in $subnetIds) {
-            Write-Host "          Eliminando Subnet: $subnet"
-            $null = Invoke-AwsSafe -AwsArgs @("ec2", "delete-subnet", "--region", $TargetRegion, "--subnet-id", $subnet)
-        }
+            # Desasociar y eliminar Route Tables no-main
+            $rtbAssocs = ConvertTo-UniqueIds -RawTexts @((Invoke-AwsSafe -AwsArgs @("ec2", "describe-route-tables", "--region", $TargetRegion, "--filters", "Name=vpc-id,Values=$vpcId", "--query", "RouteTables[].Associations[?!Main].RouteTableAssociationId", "--output", "text")).Output)
+            foreach ($assoc in $rtbAssocs) {
+                $null = Invoke-AwsSafe -AwsArgs @("ec2", "disassociate-route-table", "--region", $TargetRegion, "--association-id", $assoc)
+            }
 
-        # Desasociar y eliminar Route Tables no-main
-        $rtbAssocs = ConvertTo-UniqueIds -RawTexts @((Invoke-AwsSafe -AwsArgs @("ec2", "describe-route-tables", "--region", $TargetRegion, "--filters", "Name=vpc-id,Values=$vpcId", "--query", "RouteTables[].Associations[?!Main].RouteTableAssociationId", "--output", "text")).Output)
-        foreach ($assoc in $rtbAssocs) {
-            $null = Invoke-AwsSafe -AwsArgs @("ec2", "disassociate-route-table", "--region", $TargetRegion, "--association-id", $assoc)
-        }
+            $rtbIds = ConvertTo-UniqueIds -RawTexts @((Invoke-AwsSafe -AwsArgs @("ec2", "describe-route-tables", "--region", $TargetRegion, "--filters", "Name=vpc-id,Values=$vpcId", "--query", "RouteTables[?!(Associations[?Main])].RouteTableId", "--output", "text")).Output)
+            foreach ($rtb in $rtbIds) {
+                Write-Host "          Eliminando Route Table: $rtb"
+                $null = Invoke-AwsSafe -AwsArgs @("ec2", "delete-route-table", "--region", $TargetRegion, "--route-table-id", $rtb)
+            }
 
-        $rtbIds = ConvertTo-UniqueIds -RawTexts @((Invoke-AwsSafe -AwsArgs @("ec2", "describe-route-tables", "--region", $TargetRegion, "--filters", "Name=vpc-id,Values=$vpcId", "--query", "RouteTables[?!(Associations[?Main])].RouteTableId", "--output", "text")).Output)
-        foreach ($rtb in $rtbIds) {
-            Write-Host "          Eliminando Route Table: $rtb"
-            $null = Invoke-AwsSafe -AwsArgs @("ec2", "delete-route-table", "--region", $TargetRegion, "--route-table-id", $rtb)
-        }
+            # Desacoplar y eliminar Internet Gateways
+            $igwIds = ConvertTo-UniqueIds -RawTexts @((Invoke-AwsSafe -AwsArgs @("ec2", "describe-internet-gateways", "--region", $TargetRegion, "--filters", "Name=attachment.vpc-id,Values=$vpcId", "--query", "InternetGateways[].InternetGatewayId", "--output", "text")).Output)
+            foreach ($igw in $igwIds) {
+                Write-Host "          Desacoplando y eliminando IGW: $igw"
+                $null = Invoke-AwsSafe -AwsArgs @("ec2", "detach-internet-gateway", "--region", $TargetRegion, "--internet-gateway-id", $igw, "--vpc-id", $vpcId)
+                $null = Invoke-AwsSafe -AwsArgs @("ec2", "delete-internet-gateway", "--region", $TargetRegion, "--internet-gateway-id", $igw)
+            }
 
-        # Desacoplar y eliminar Internet Gateways
-        $igwIds = ConvertTo-UniqueIds -RawTexts @((Invoke-AwsSafe -AwsArgs @("ec2", "describe-internet-gateways", "--region", $TargetRegion, "--filters", "Name=attachment.vpc-id,Values=$vpcId", "--query", "InternetGateways[].InternetGatewayId", "--output", "text")).Output)
-        foreach ($igw in $igwIds) {
-            Write-Host "          Desacoplando y eliminando IGW: $igw"
-            $null = Invoke-AwsSafe -AwsArgs @("ec2", "detach-internet-gateway", "--region", $TargetRegion, "--internet-gateway-id", $igw, "--vpc-id", $vpcId)
-            $null = Invoke-AwsSafe -AwsArgs @("ec2", "delete-internet-gateway", "--region", $TargetRegion, "--internet-gateway-id", $igw)
+            # Eliminar VPC
+            Write-Host "          Eliminando VPC: $vpcId"
+            $null = Invoke-AwsSafe -AwsArgs @("ec2", "delete-vpc", "--region", $TargetRegion, "--vpc-id", $vpcId)
         }
-
-        # Eliminar VPC
-        Write-Host "          Eliminando VPC: $vpcId"
-        $null = Invoke-AwsSafe -AwsArgs @("ec2", "delete-vpc", "--region", $TargetRegion, "--vpc-id", $vpcId)
+    } else {
+        Write-Host "        Sin VPCs de $ProjectPrefix activas."
     }
 } else {
-    Write-Host "        Sin VPCs de $ProjectPrefix activas."
+    Write-Host "  [2.8] [CONSERVADO] VPC, Subredes, Route Tables, IGW y Security Groups conservados para Amazon RDS." -ForegroundColor Green
 }
 
 # =============================================================================
@@ -383,8 +436,16 @@ Remove-Item -Path "terraform.tfstate", "terraform.tfstate.backup", "pnk-ec2-depl
 
 Write-Host ""
 Write-Host "=============================================================================" -ForegroundColor Green
-Write-Host "  INFRAESTRUCTURA DESTRUIDA COMPLETAMENTE (STATELESS-PROOF)" -ForegroundColor Green
-Write-Host "  Todos los recursos (${ProjectPrefix}*: ASG, LT, EC2, ALB, TG, EIP, RDS," -ForegroundColor Green
-Write-Host "  Key Pair, Security Groups, Subnets, Route Tables, IGW y VPC) eliminados." -ForegroundColor Green
-Write-Host "  Confirmado: `$0 en cargos continuos de AWS." -ForegroundColor Green
+if ($shouldDeleteRds) {
+    Write-Host "  INFRAESTRUCTURA DESTRUIDA COMPLETAMENTE (STATELESS-PROOF)" -ForegroundColor Green
+    Write-Host "  Todos los recursos (${ProjectPrefix}*: ASG, LT, EC2, ALB, TG, EIP, RDS," -ForegroundColor Green
+    Write-Host "  Key Pair, Security Groups, Subnets, Route Tables, IGW y VPC) eliminados." -ForegroundColor Green
+    Write-Host "  Confirmado: `$0 en cargos continuos de AWS." -ForegroundColor Green
+} else {
+    Write-Host "  INFRAESTRUCTURA DE COMPUTO DESTRUIDA (RDS Y VPC CONSERVADOS)" -ForegroundColor Green
+    Write-Host "  Eliminados : ASG, Launch Templates, EC2, ALB, Target Group, EIP y Key Pair." -ForegroundColor Green
+    Write-Host "  Conservados: Amazon RDS ($rdsId) y su red VPC/Subredes/Security Groups base." -ForegroundColor Green
+    Write-Host "  En tu proximo '.\1-desplegar-aws.ps1', podras reutilizar este RDS en ~2 min." -ForegroundColor Green
+    Write-Host "  (Para eliminar tambien el RDS y dejar `$0 total, ejecuta: .\2-destruir-aws.ps1 -DeleteRds)" -ForegroundColor Yellow
+}
 Write-Host "=============================================================================" -ForegroundColor Green

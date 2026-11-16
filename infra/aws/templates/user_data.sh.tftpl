@@ -66,7 +66,7 @@ systemctl enable docker
 systemctl start docker
 usermod -aG docker ubuntu || true
 
-# 3. Clonar rama produccion, descargar certificado SSL RDS y generar .env seguro
+# 3. Clonar rama produccion y configurar .env (con Amazon RDS o PostgreSQL local)
 echo "[3/7] Clonando rama ${git_branch} en /opt/carta-digital y configurando .env..."
 APP_DIR="/opt/carta-digital"
 if [ ! -d "$APP_DIR/.git" ]; then
@@ -78,12 +78,15 @@ else
   git reset --hard "origin/${git_branch}"
 fi
 
-mkdir -p "$APP_DIR/certs"
-curl -fsSL "https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem" \
-  -o "$APP_DIR/certs/rds-global-bundle.pem"
-chmod 644 "$APP_DIR/certs/rds-global-bundle.pem"
+CREATE_RDS="${create_rds}"
 
-cat <<'ENVEOF' > "$APP_DIR/.env"
+if [ "$CREATE_RDS" = "true" ]; then
+  mkdir -p "$APP_DIR/certs"
+  curl -fsSL "https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem" \
+    -o "$APP_DIR/certs/rds-global-bundle.pem"
+  chmod 644 "$APP_DIR/certs/rds-global-bundle.pem"
+
+  cat <<'ENVEOF' > "$APP_DIR/.env"
 NODE_ENV=production
 POSTGRES_HOST=${rds_address}
 POSTGRES_PORT=5432
@@ -97,35 +100,35 @@ CORS_ORIGIN=${cors_origin}
 ENFORCE_HTTPS=1
 ENVEOF
 
-chmod 600 "$APP_DIR/.env"
-chown -R ubuntu:ubuntu "$APP_DIR"
+  chmod 600 "$APP_DIR/.env"
+  chown -R ubuntu:ubuntu "$APP_DIR"
 
-# 4. Esperar disponibilidad de Amazon RDS PostgreSQL
-echo "[4/7] Esperando disponibilidad de Amazon RDS en ${rds_address}:5432..."
-RDS_READY=0
-for i in $(seq 1 60); do
-  if pg_isready -h "${rds_address}" -p 5432 -U "${db_username}" -d "${db_name}" >/dev/null 2>&1; then
-    echo "RDS disponible en el intento $i."
-    RDS_READY=1
-    break
+  # 4. Esperar disponibilidad de Amazon RDS PostgreSQL
+  echo "[4/7] Esperando disponibilidad de Amazon RDS en ${rds_address}:5432..."
+  RDS_READY=0
+  for i in $(seq 1 60); do
+    if pg_isready -h "${rds_address}" -p 5432 -U "${db_username}" -d "${db_name}" >/dev/null 2>&1; then
+      echo "RDS disponible en el intento $i."
+      RDS_READY=1
+      break
+    fi
+    sleep 5
+  done
+
+  if [ "$RDS_READY" -ne 1 ]; then
+    echo "ERROR: Amazon RDS no respondió a pg_isready tras 300 segundos."
+    exit 1
   fi
-  sleep 5
-done
 
-if [ "$RDS_READY" -ne 1 ]; then
-  echo "ERROR: Amazon RDS no respondió a pg_isready tras 300 segundos."
-  exit 1
-fi
+  # 5. Inicializar esquema SQL solo si public.usuarios NO existe (con advisory lock contra carreras ASG)
+  echo "[5/7] Verificando esquema SQL en Amazon RDS..."
+  export PGPASSWORD='${db_password}'
+  export PGSSLMODE="verify-full"
+  export PGSSLROOTCERT="$APP_DIR/certs/rds-global-bundle.pem"
 
-# 5. Inicializar esquema SQL solo si public.usuarios NO existe (con advisory lock contra carreras ASG)
-echo "[5/7] Verificando esquema SQL en Amazon RDS..."
-export PGPASSWORD='${db_password}'
-export PGSSLMODE="verify-full"
-export PGSSLROOTCERT="$APP_DIR/certs/rds-global-bundle.pem"
-
-SQL_INIT_OK=0
-for attempt in $(seq 1 5); do
-  if psql -v ON_ERROR_STOP=1 -h "${rds_address}" -p 5432 -U "${db_username}" -d "${db_name}" <<'PSQL_INIT'
+  SQL_INIT_OK=0
+  for attempt in $(seq 1 5); do
+    if psql -v ON_ERROR_STOP=1 -h "${rds_address}" -p 5432 -U "${db_username}" -d "${db_name}" <<'PSQL_INIT'
 SELECT pg_advisory_lock(9042026);
 SELECT (to_regclass('public.usuarios') IS NULL) AS needs_init \gset
 \if :needs_init
@@ -136,24 +139,121 @@ SELECT (to_regclass('public.usuarios') IS NULL) AS needs_init \gset
 \endif
 SELECT pg_advisory_unlock(9042026);
 PSQL_INIT
-  then
-    SQL_INIT_OK=1
-    break
+    then
+      SQL_INIT_OK=1
+      break
+    fi
+    echo "Reintentando verificación/inicialización SQL (intento $attempt/5)..."
+    sleep 5
+  done
+  unset PGPASSWORD
+
+  if [ "$SQL_INIT_OK" -ne 1 ]; then
+    echo "ERROR: Falló la verificación/inicialización SQL en Amazon RDS."
+    exit 1
   fi
-  echo "Reintentando verificación/inicialización SQL (intento $attempt/5)..."
-  sleep 5
-done
-unset PGPASSWORD
 
-if [ "$SQL_INIT_OK" -ne 1 ]; then
-  echo "ERROR: Falló la verificación/inicialización SQL en Amazon RDS."
-  exit 1
+  # 6. Construir e iniciar contenedores en modo producción con Amazon RDS
+  echo "[6/7] Levantando contenedores con docker-compose.rds.yml..."
+  cd "$APP_DIR"
+  docker compose -f docker-compose.rds.yml up -d --build
+else
+  cat <<'ENVEOF' > "$APP_DIR/.env"
+NODE_ENV=production
+POSTGRES_HOST=db-prod
+POSTGRES_PORT=5432
+POSTGRES_DB=${db_name}
+POSTGRES_USER=${db_username}
+POSTGRES_PASSWORD=${db_password}
+POSTGRES_SSL=false
+POSTGRES_SSL_CA=
+PASSWORD_PEPPER=${password_pepper}
+CORS_ORIGIN=${cors_origin}
+ENFORCE_HTTPS=1
+ENVEOF
+
+  cat <<'COMPOSEEOF' > "$APP_DIR/docker-compose.localdb.yml"
+services:
+  db-prod:
+    image: postgres:16-alpine
+    container_name: pnk-db-prod
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: $${POSTGRES_DB:-pnk_security}
+      POSTGRES_USER: $${POSTGRES_USER}
+      POSTGRES_PASSWORD: $${POSTGRES_PASSWORD}
+    volumes:
+      - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - pgdata_prod:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB:-pnk_security}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - edge_net
+
+  backend-prod:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: pnk-backend-prod
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      BACKEND_PORT: 3000
+      POSTGRES_HOST: db-prod
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: $${POSTGRES_DB:-pnk_security}
+      POSTGRES_USER: $${POSTGRES_USER}
+      POSTGRES_PASSWORD: $${POSTGRES_PASSWORD}
+      POSTGRES_SSL: "false"
+      PASSWORD_PEPPER: $${PASSWORD_PEPPER}
+      SESSION_IDLE_TIMEOUT_SEC: $${SESSION_IDLE_TIMEOUT_SEC:-900}
+      SESSION_ABSOLUTE_TIMEOUT_SEC: $${SESSION_ABSOLUTE_TIMEOUT_SEC:-14400}
+      CORS_ORIGIN: $${CORS_ORIGIN}
+      ENFORCE_HTTPS: $${ENFORCE_HTTPS:-1}
+    depends_on:
+      db-prod:
+        condition: service_healthy
+    networks:
+      - edge_net
+
+  frontend-prod:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: pnk-frontend-prod
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      FRONTEND_PORT: 8080
+      BACKEND_URL: http://backend-prod:3000
+    ports:
+      - "80:8080"
+    depends_on:
+      backend-prod:
+        condition: service_healthy
+    networks:
+      - edge_net
+
+volumes:
+  pgdata_prod:
+
+networks:
+  edge_net:
+    driver: bridge
+COMPOSEEOF
+
+  chmod 600 "$APP_DIR/.env"
+  chown -R ubuntu:ubuntu "$APP_DIR"
+
+  echo "[4/7] Modo sin Amazon RDS: omitiendo espera RDS (se usará PostgreSQL local en Docker)."
+  echo "[5/7] Modo sin Amazon RDS: init.sql se ejecutará automáticamente al iniciar db-prod."
+  echo "[6/7] Levantando contenedores con docker-compose.localdb.yml..."
+  cd "$APP_DIR"
+  docker compose -f docker-compose.localdb.yml up -d --build
 fi
-
-# 6. Construir e iniciar contenedores en modo producción con Amazon RDS
-echo "[6/7] Levantando contenedores con docker-compose.rds.yml..."
-cd "$APP_DIR"
-docker compose -f docker-compose.rds.yml up -d --build
 
 # 7. Auto-asociar Elastic IP si no está asociada o su instancia previa dejó de estar 'running'
 echo "[7/7] Verificando asociación de Elastic IP (${eip_allocation_id})..."

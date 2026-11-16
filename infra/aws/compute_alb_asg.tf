@@ -31,10 +31,11 @@ locals {
   rendered_user_data = templatefile("${path.module}/templates/user_data.sh.tftpl", {
     git_repo_url      = var.git_repo_url
     git_branch        = var.git_branch
-    rds_address       = aws_db_instance.postgres.address
+    create_rds        = var.create_rds
+    rds_address       = local.rds_address
     db_name           = var.db_name
     db_username       = var.db_username
-    db_password       = random_password.db_password.result
+    db_password       = local.effective_db_password
     password_pepper   = random_password.password_pepper.result
     cors_origin       = var.cors_origin
     eip_allocation_id = aws_eip.primary.id
@@ -47,8 +48,8 @@ resource "aws_lb" "main" {
   name                       = "${var.project_name}-alb"
   internal                   = false
   load_balancer_type         = "application"
-  security_groups            = [aws_security_group.alb_sg.id]
-  subnets                    = aws_subnet.public[*].id
+  security_groups            = [local.alb_sg_id]
+  subnets                    = local.public_subnet_ids
   enable_deletion_protection = false
 
   tags = {
@@ -60,7 +61,7 @@ resource "aws_lb_target_group" "frontend" {
   name     = "${var.project_name}-tg"
   port     = 80
   protocol = "HTTP"
-  vpc_id   = aws_vpc.main.id
+  vpc_id   = local.vpc_id
 
   health_check {
     enabled             = true
@@ -108,7 +109,7 @@ resource "aws_launch_template" "app" {
 
   network_interfaces {
     associate_public_ip_address = true
-    security_groups             = [aws_security_group.ec2_sg.id]
+    security_groups             = [local.ec2_sg_id]
   }
 
   metadata_options {
@@ -130,7 +131,7 @@ resource "aws_launch_template" "app" {
 
 resource "aws_autoscaling_group" "app" {
   name                      = "${var.project_name}-asg"
-  vpc_zone_identifier       = aws_subnet.public[*].id
+  vpc_zone_identifier       = local.public_subnet_ids
   target_group_arns         = [aws_lb_target_group.frontend.arn]
   health_check_type         = "ELB"
   health_check_grace_period = 300
