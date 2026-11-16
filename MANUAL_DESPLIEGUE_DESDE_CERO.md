@@ -237,14 +237,17 @@ Si trabajas con una cuenta AWS personal propia (con Capa Gratuita / *Free Tier*)
 
 ## 3. Paso 1: Desplegar toda la Infraestructura AWS con Script 1
 
-### 3.1. Clonar el repositorio y entrar a `infra/aws`
+### 3.1. Clonar el repositorio (rama `produccion`) y entrar a `infra/aws`
 
 En tu terminal (o en AWS CloudShell):
 
 ```bash
-git clone https://github.com/stxtiz/trabajo_desarrollo_seguro.git
+git clone -b produccion --single-branch https://github.com/stxtiz/trabajo_desarrollo_seguro.git
 cd trabajo_desarrollo_seguro/infra/aws
 ```
+
+> [!IMPORTANT]
+> La rama por defecto en GitHub (`main`) contiene únicamente la versión antigua en PHP y **no** incluye `infra/aws/` ni la arquitectura moderna. **Debes clonar indicando `-b produccion`** (o ejecutar `git checkout produccion` si ya clonaste el repositorio completo sin `--single-branch`) para obtener `infra/aws/` y el stack moderno (React + Node + Docker).
 
 ### 3.2. Ejecutar Script 1
 
@@ -582,3 +585,4 @@ Desde la carpeta `infra/aws`:
 | **`AccessDenied` al intentar crear usuarios o roles en IAM** | AWS Academy Learner Lab (`LabRole` / `LabStudent`) prohíbe `iam:CreateUser` y `iam:CreateRole`. | No entres a IAM a crear usuarios ni ejecutes scripts que creen roles. Usa **AWS CloudShell** o **AWS Details** (`LabRole`), y mantén `iam_instance_profile` vacío (por defecto) o usa `"LabInstanceProfile"` solo si se requiere. |
 | **Windows PowerShell bloquea `.\1-desplegar-aws.ps1`** | Política `ExecutionPolicy` restringida en Windows. | Ejecuta `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` en la misma ventana de PowerShell y vuelve a correr el script. |
 | **SSH falla por permisos demasiado abiertos en `.pem` (Linux/macOS)** | OpenSSH rechaza llaves privadas legibles por otros usuarios. | Ejecuta `chmod 600 infra/aws/pnk-ec2-deploy-key.pem` antes de conectarte por SSH. |
+| **No existe la carpeta `infra/aws` después de hacer `git clone`** | Hiciste `git clone` sin indicar la rama y Git descargó la rama antigua `main` (PHP). | Ejecuta `git fetch origin produccion:produccion && git checkout produccion`, o clona directamente con `git clone -b produccion --single-branch https://github.com/stxtiz/trabajo_desarrollo_seguro.git`. |
