@@ -23,12 +23,16 @@ $TargetRegion = if (-not [string]::IsNullOrWhiteSpace($env:AWS_REGION)) {
 function Invoke-AwsCheck {
     param([string[]]$AwsArgs)
     $prevEap = $ErrorActionPreference
+    $hasNativePref = Test-Path variable:PSNativeCommandUseErrorActionPreference
+    $prevNativePref = if ($hasNativePref) { $PSNativeCommandUseErrorActionPreference } else { $false }
     $ErrorActionPreference = "Continue"
+    if ($hasNativePref) { $PSNativeCommandUseErrorActionPreference = $false }
     try {
         $out = & aws @AwsArgs 2>$null
         $code = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $prevEap
+        if ($hasNativePref) { $PSNativeCommandUseErrorActionPreference = $prevNativePref }
     }
     if ($code -ne 0) { return "" }
     $txt = ($out | Out-String).Trim()
@@ -55,8 +59,19 @@ if (-not (Get-Command terraform -ErrorAction SilentlyContinue)) {
 
 # 2. Verificar sesion activa en AWS CLI
 Write-Host "[1/4] Verificando credenciales activas de AWS CLI..."
-$identityJson = aws sts get-caller-identity 2>$null
-if ($LASTEXITCODE -ne 0) {
+$prevEap = $ErrorActionPreference
+$hasNativePref = Test-Path variable:PSNativeCommandUseErrorActionPreference
+$prevNativePref = if ($hasNativePref) { $PSNativeCommandUseErrorActionPreference } else { $false }
+$ErrorActionPreference = "Continue"
+if ($hasNativePref) { $PSNativeCommandUseErrorActionPreference = $false }
+try {
+    $identityJson = aws sts get-caller-identity 2>$null
+    $identityExit = $LASTEXITCODE
+} finally {
+    $ErrorActionPreference = $prevEap
+    if ($hasNativePref) { $PSNativeCommandUseErrorActionPreference = $prevNativePref }
+}
+if ($identityExit -ne 0) {
     Write-Host ""
     Write-Host "[ERROR] No hay credenciales activas de AWS configuradas o el token temporal expiro." -ForegroundColor Red
     Write-Host ""
@@ -143,10 +158,17 @@ if ($identity.Arn -match "voclabs|LabRole") {
     Write-Host "  Entorno AWS Academy detectado: usando iam_instance_profile=LabInstanceProfile." -ForegroundColor Gray
 } else {
     $prevEap = $ErrorActionPreference
+    $hasNativePref = Test-Path variable:PSNativeCommandUseErrorActionPreference
+    $prevNativePref = if ($hasNativePref) { $PSNativeCommandUseErrorActionPreference } else { $false }
     $ErrorActionPreference = "Continue"
-    $null = aws iam get-instance-profile --instance-profile-name LabInstanceProfile 2>$null
-    $iamCheckExit = $LASTEXITCODE
-    $ErrorActionPreference = $prevEap
+    if ($hasNativePref) { $PSNativeCommandUseErrorActionPreference = $false }
+    try {
+        $null = aws iam get-instance-profile --instance-profile-name LabInstanceProfile 2>$null
+        $iamCheckExit = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $prevEap
+        if ($hasNativePref) { $PSNativeCommandUseErrorActionPreference = $prevNativePref }
+    }
 
     if ($iamCheckExit -eq 0) {
         Write-Host "  Instance Profile 'LabInstanceProfile' encontrado." -ForegroundColor Gray
@@ -161,6 +183,7 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 # Guardar outputs en JSON
 $outputsJson = terraform output -json
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 $outputsJson | Set-Content -Path "outputs-despliegue.json" -Encoding UTF8
 
 $EIP = (terraform output -raw elastic_ip).Trim()
@@ -175,18 +198,36 @@ $SSH_CMD = "ssh -i $SSH_KEY_PATH ubuntu@$EIP"
 
 # Asociar inmediatamente la Elastic IP a la primera instancia running del Auto Scaling Group
 $prevEap = $ErrorActionPreference
+$hasNativePref = Test-Path variable:PSNativeCommandUseErrorActionPreference
+$prevNativePref = if ($hasNativePref) { $PSNativeCommandUseErrorActionPreference } else { $false }
 $ErrorActionPreference = "Continue"
-$ASG_INSTANCE_ID = (aws ec2 describe-instances `
-    --filters "Name=tag:aws:autoscaling:groupName,Values=$ASG_NAME" "Name=instance-state-name,Values=running" `
-    --query "Reservations[0].Instances[0].InstanceId" `
-    --output text 2>$null)
-$describeExit = $LASTEXITCODE
-$ErrorActionPreference = $prevEap
+if ($hasNativePref) { $PSNativeCommandUseErrorActionPreference = $false }
+try {
+    $ASG_INSTANCE_ID = (aws ec2 describe-instances `
+        --filters "Name=tag:aws:autoscaling:groupName,Values=$ASG_NAME" "Name=instance-state-name,Values=running" `
+        --query "Reservations[0].Instances[0].InstanceId" `
+        --output text 2>$null)
+    $describeExit = $LASTEXITCODE
+} finally {
+    $ErrorActionPreference = $prevEap
+    if ($hasNativePref) { $PSNativeCommandUseErrorActionPreference = $prevNativePref }
+}
 
 if ($describeExit -eq 0 -and -not [string]::IsNullOrWhiteSpace($ASG_INSTANCE_ID) -and $ASG_INSTANCE_ID.Trim() -ne "None") {
     $ASG_INSTANCE_ID = $ASG_INSTANCE_ID.Trim()
     Write-Host "  Asociando Elastic IP ($EIP / $EIP_ALLOC_ID) a instancia activa del ASG ($ASG_INSTANCE_ID)..." -ForegroundColor Cyan
-    $null = aws ec2 associate-address --instance-id $ASG_INSTANCE_ID --allocation-id $EIP_ALLOC_ID --allow-reassociation
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    if ($hasNativePref) { $PSNativeCommandUseErrorActionPreference = $false }
+    try {
+        $null = aws ec2 associate-address --instance-id $ASG_INSTANCE_ID --allocation-id $EIP_ALLOC_ID --allow-reassociation 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  Aviso: No se pudo asociar la Elastic IP aun; user_data la asociara al iniciar." -ForegroundColor Yellow
+        }
+    } finally {
+        $ErrorActionPreference = $prevEap
+        if ($hasNativePref) { $PSNativeCommandUseErrorActionPreference = $prevNativePref }
+    }
 } else {
     $ASG_INSTANCE_ID = "pendiente"
     Write-Host "  Aviso: No se encontro aun una instancia 'running' en $ASG_NAME; user_data asociara la EIP al iniciar." -ForegroundColor Yellow

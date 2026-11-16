@@ -10,12 +10,14 @@
 #   2) Siempre ejecuta un barrido directo por AWS CLI (Stateless Sweep) por prefijo
 #      'pnk-carta-digital' en orden de dependencias para garantizar $0 cobros.
 # =============================================================================
-set -euo pipefail
+# Sin -e ni pipefail: un recurso ausente en AWS CLI (ej. exit 254 LoadBalancerNotFound/DBInstanceNotFound)
+# nunca debe abortar el barrido stateless.
+set -u
 
 export PATH="$HOME/bin:$PATH"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+cd "$SCRIPT_DIR" || exit 1
 
 AUTO_CONFIRM="false"
 if [ "${1:-}" = "-y" ] || [ "${1:-}" = "--yes" ]; then
@@ -61,7 +63,8 @@ if [ "$AUTO_CONFIRM" != "true" ]; then
   echo "  - VPC, Subredes, ENIs, Route Tables, Internet Gateway y Security Groups"
   echo "  - Archivos locales de estado (terraform.tfstate, llave .pem y outputs JSON)"
   echo ""
-  read -r -p "¿Deseas continuar y destruir toda la infraestructura? [s/N]: " CONFIRM
+  CONFIRM=""
+  read -r -p "¿Deseas continuar y destruir toda la infraestructura? [s/N]: " CONFIRM || CONFIRM=""
   case "$CONFIRM" in
     s|S|si|SI|y|Y|yes|YES)
       ;;
@@ -86,9 +89,9 @@ install_terraform_linux_if_needed() {
       TF_ARCH="amd64"
     fi
     TF_VER="1.11.2"
-    curl -fsSL "https://releases.hashicorp.com/terraform/${TF_VER}/terraform_${TF_VER}_linux_${TF_ARCH}.zip" -o /tmp/terraform.zip
-    unzip -o -q /tmp/terraform.zip -d "$HOME/bin"
-    chmod +x "$HOME/bin/terraform"
+    curl -fsSL "https://releases.hashicorp.com/terraform/${TF_VER}/terraform_${TF_VER}_linux_${TF_ARCH}.zip" -o /tmp/terraform.zip || return 1
+    unzip -o -q /tmp/terraform.zip -d "$HOME/bin" || return 1
+    chmod +x "$HOME/bin/terraform" || return 1
     rm -f /tmp/terraform.zip
     echo "  Terraform instalado en $HOME/bin/terraform (persistente en CloudShell)."
     return 0
@@ -97,7 +100,7 @@ install_terraform_linux_if_needed() {
 }
 
 dedup_words() {
-  tr ' \t' '\n\n' | grep -v '^$' | grep -v '^None$' | sort -u || true
+  tr ' \t\r' '\n\n\n' | (grep -v '^$' || true) | (grep -v '^None$' || true) | (grep -v '^null$' || true) | sort -u || true
 }
 
 discover_project_vpcs() {
@@ -108,7 +111,7 @@ discover_project_vpcs() {
   v2="$(aws ec2 describe-vpcs --region "$TARGET_REGION" \
     --filters "Name=tag:Project,Values=${PROJECT_PREFIX}" \
     --query "Vpcs[].VpcId" --output text 2>/dev/null || true)"
-  printf "%s\n%s\n" "$v1" "$v2" | dedup_words
+  printf "%s\n%s\n" "$v1" "$v2" | dedup_words || true
 }
 
 # =============================================================================
@@ -139,9 +142,9 @@ echo "[2/3] Ejecutando barrido directo por AWS CLI en región ${TARGET_REGION} (
 
 # 2.1. Auto Scaling Group (pnk-carta-digital-asg)
 echo "  [2.1] Buscando Auto Scaling Groups (${PROJECT_PREFIX}*)..."
-ASG_LIST="$(aws autoscaling describe-auto-scaling-groups --region "$TARGET_REGION" \
+ASG_LIST="$((aws autoscaling describe-auto-scaling-groups --region "$TARGET_REGION" \
   --query "AutoScalingGroups[?starts_with(AutoScalingGroupName, '${PROJECT_PREFIX}')].AutoScalingGroupName" \
-  --output text 2>/dev/null | dedup_words)"
+  --output text 2>/dev/null || true) | dedup_words || true)"
 if [ -n "$ASG_LIST" ]; then
   for asg in $ASG_LIST; do
     echo "        Eliminando ASG (--force-delete): $asg"
@@ -154,9 +157,9 @@ fi
 
 # 2.2. Launch Templates (pnk-carta-digital-lt-*)
 echo "  [2.2] Buscando Launch Templates (${PROJECT_PREFIX}-*)..."
-LT_LIST="$(aws ec2 describe-launch-templates --region "$TARGET_REGION" \
+LT_LIST="$((aws ec2 describe-launch-templates --region "$TARGET_REGION" \
   --filters "Name=launch-template-name,Values=${PROJECT_PREFIX}-*" \
-  --query "LaunchTemplates[].LaunchTemplateId" --output text 2>/dev/null | dedup_words)"
+  --query "LaunchTemplates[].LaunchTemplateId" --output text 2>/dev/null || true) | dedup_words || true)"
 if [ -n "$LT_LIST" ]; then
   for lt_id in $LT_LIST; do
     echo "        Eliminando Launch Template: $lt_id"
@@ -169,7 +172,7 @@ fi
 
 # 2.3. Instancias EC2 (por tags del proyecto o dentro de la VPC del proyecto)
 echo "  [2.3] Buscando instancias EC2 (${PROJECT_PREFIX}* o dentro de ${PROJECT_PREFIX}-vpc)..."
-VPC_IDS="$(discover_project_vpcs)"
+VPC_IDS="$(discover_project_vpcs || true)"
 EC2_RAW=""
 EC2_RAW="$EC2_RAW $(aws ec2 describe-instances --region "$TARGET_REGION" \
   --filters "Name=tag:Name,Values=${PROJECT_PREFIX}*" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
@@ -182,7 +185,7 @@ for vpc_id in $VPC_IDS; do
     --filters "Name=vpc-id,Values=${vpc_id}" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
     --query "Reservations[].Instances[].InstanceId" --output text 2>/dev/null || true)"
 done
-INSTANCE_IDS="$(printf "%s\n" "$EC2_RAW" | dedup_words)"
+INSTANCE_IDS="$(printf "%s\n" "$EC2_RAW" | dedup_words || true)"
 
 if [ -n "$INSTANCE_IDS" ]; then
   INSTANCE_ARGS="$(printf "%s " $INSTANCE_IDS)"
@@ -198,9 +201,9 @@ fi
 
 # 2.4. Application Load Balancer (pnk-carta-digital-alb) & Target Group (pnk-carta-digital-tg)
 echo "  [2.4] Buscando Application Load Balancer y Target Group..."
-ALB_ARN="$(aws elbv2 describe-load-balancers --region "$TARGET_REGION" \
+ALB_ARN="$((aws elbv2 describe-load-balancers --region "$TARGET_REGION" \
   --names "${PROJECT_PREFIX}-alb" \
-  --query "LoadBalancers[].LoadBalancerArn" --output text 2>/dev/null | dedup_words)"
+  --query "LoadBalancers[].LoadBalancerArn" --output text 2>/dev/null || true) | dedup_words || true)"
 if [ -n "$ALB_ARN" ]; then
   for alb in $ALB_ARN; do
     echo "        Eliminando ALB: $alb"
@@ -212,9 +215,9 @@ else
   echo "        Sin Application Load Balancer (${PROJECT_PREFIX}-alb)."
 fi
 
-TG_ARN="$(aws elbv2 describe-target-groups --region "$TARGET_REGION" \
+TG_ARN="$((aws elbv2 describe-target-groups --region "$TARGET_REGION" \
   --names "${PROJECT_PREFIX}-tg" \
-  --query "TargetGroups[].TargetGroupArn" --output text 2>/dev/null | dedup_words)"
+  --query "TargetGroups[].TargetGroupArn" --output text 2>/dev/null || true) | dedup_words || true)"
 if [ -n "$TG_ARN" ]; then
   for tg in $TG_ARN; do
     echo "        Eliminando Target Group: $tg"
@@ -238,12 +241,12 @@ EIP_RAW="$EIP_RAW $(aws ec2 describe-addresses --region "$TARGET_REGION" \
 EIP_RAW="$EIP_RAW $(aws ec2 describe-addresses --region "$TARGET_REGION" \
   --filters "Name=tag:Project,Values=${PROJECT_PREFIX}" \
   --query "Addresses[].AllocationId" --output text 2>/dev/null || true)"
-EIP_ALLOCS="$(printf "%s\n" "$EIP_RAW" | dedup_words)"
+EIP_ALLOCS="$(printf "%s\n" "$EIP_RAW" | dedup_words || true)"
 if [ -n "$EIP_ALLOCS" ]; then
   for alloc_id in $EIP_ALLOCS; do
-    ASSOC_ID="$(aws ec2 describe-addresses --region "$TARGET_REGION" \
+    ASSOC_ID="$((aws ec2 describe-addresses --region "$TARGET_REGION" \
       --allocation-ids "$alloc_id" \
-      --query "Addresses[0].AssociationId" --output text 2>/dev/null | dedup_words)"
+      --query "Addresses[0].AssociationId" --output text 2>/dev/null || true) | dedup_words || true)"
     if [ -n "$ASSOC_ID" ]; then
       echo "        Desasociando Elastic IP ($alloc_id / $ASSOC_ID)..."
       aws ec2 disassociate-address --region "$TARGET_REGION" --association-id "$ASSOC_ID" >/dev/null 2>&1 || true
@@ -258,9 +261,9 @@ fi
 # 2.6. Amazon RDS PostgreSQL (pnk-carta-digital-postgres & pnk-carta-digital-rds-subnet-group)
 echo "  [2.6] Buscando Amazon RDS PostgreSQL (${PROJECT_PREFIX}-postgres)..."
 RDS_ID="${PROJECT_PREFIX}-postgres"
-RDS_STATUS="$(aws rds describe-db-instances --region "$TARGET_REGION" \
+RDS_STATUS="$((aws rds describe-db-instances --region "$TARGET_REGION" \
   --db-instance-identifier "$RDS_ID" \
-  --query "DBInstances[0].DBInstanceStatus" --output text 2>/dev/null | dedup_words)"
+  --query "DBInstances[0].DBInstanceStatus" --output text 2>/dev/null || true) | dedup_words || true)"
 if [ -n "$RDS_STATUS" ]; then
   if [ "$RDS_STATUS" != "deleting" ]; then
     echo "        Deshabilitando deletion-protection (si aplica) en $RDS_ID..."
@@ -292,24 +295,24 @@ aws ec2 delete-key-pair --region "$TARGET_REGION" --key-name "${PROJECT_PREFIX}-
 
 # 2.8. VPC, ENIs, Security Groups, Subnets, Route Tables e Internet Gateway
 echo "  [2.8] Buscando VPC, Subredes, Route Tables, IGW y Security Groups (${PROJECT_PREFIX}*)..."
-VPC_IDS="$(discover_project_vpcs)"
+VPC_IDS="$(discover_project_vpcs || true)"
 if [ -n "$VPC_IDS" ]; then
   for vpc_id in $VPC_IDS; do
     echo "        Limpiando VPC: $vpc_id"
 
     # Esperar a que ENIs de ALB/RDS terminen de desacoplarse y limpiar ENIs disponibles
     for wait_i in $(seq 1 12); do
-      AVAIL_ENIS="$(aws ec2 describe-network-interfaces --region "$TARGET_REGION" \
+      AVAIL_ENIS="$((aws ec2 describe-network-interfaces --region "$TARGET_REGION" \
         --filters "Name=vpc-id,Values=${vpc_id}" "Name=status,Values=available" \
-        --query "NetworkInterfaces[].NetworkInterfaceId" --output text 2>/dev/null | dedup_words)"
+        --query "NetworkInterfaces[].NetworkInterfaceId" --output text 2>/dev/null || true) | dedup_words || true)"
       for eni in $AVAIL_ENIS; do
         echo "          Eliminando ENI residual: $eni"
         aws ec2 delete-network-interface --region "$TARGET_REGION" --network-interface-id "$eni" >/dev/null 2>&1 || true
       done
 
-      ALL_ENIS="$(aws ec2 describe-network-interfaces --region "$TARGET_REGION" \
+      ALL_ENIS="$((aws ec2 describe-network-interfaces --region "$TARGET_REGION" \
         --filters "Name=vpc-id,Values=${vpc_id}" \
-        --query "NetworkInterfaces[].NetworkInterfaceId" --output text 2>/dev/null | dedup_words)"
+        --query "NetworkInterfaces[].NetworkInterfaceId" --output text 2>/dev/null || true) | dedup_words || true)"
       if [ -z "$ALL_ENIS" ]; then
         break
       fi
@@ -318,27 +321,27 @@ if [ -n "$VPC_IDS" ]; then
     done
 
     # Revocar reglas ingress/egress de Security Groups no-default (evita bloqueos por referencias cruzadas)
-    SG_IDS="$(aws ec2 describe-security-groups --region "$TARGET_REGION" \
+    SG_IDS="$((aws ec2 describe-security-groups --region "$TARGET_REGION" \
       --filters "Name=vpc-id,Values=${vpc_id}" \
-      --query "SecurityGroups[?GroupName!='default'].GroupId" --output text 2>/dev/null | dedup_words)"
+      --query "SecurityGroups[?GroupName!='default'].GroupId" --output text 2>/dev/null || true) | dedup_words || true)"
     if [ -n "$SG_IDS" ]; then
       for sg in $SG_IDS; do
-        INGRESS_JSON="$(aws ec2 describe-security-groups --region "$TARGET_REGION" \
-          --group-ids "$sg" --query "SecurityGroups[0].IpPermissions" --output json 2>/dev/null | tr -d '\r\n' || echo "[]")"
+        INGRESS_JSON="$((aws ec2 describe-security-groups --region "$TARGET_REGION" \
+          --group-ids "$sg" --query "SecurityGroups[0].IpPermissions" --output json 2>/dev/null || echo "[]") | tr -d '\r\n' || echo "[]")"
         if [ -n "$INGRESS_JSON" ] && [ "$INGRESS_JSON" != "[]" ] && [ "$INGRESS_JSON" != "null" ]; then
           aws ec2 revoke-security-group-ingress --region "$TARGET_REGION" --group-id "$sg" --ip-permissions "$INGRESS_JSON" >/dev/null 2>&1 || true
         fi
-        EGRESS_JSON="$(aws ec2 describe-security-groups --region "$TARGET_REGION" \
-          --group-ids "$sg" --query "SecurityGroups[0].IpPermissionsEgress" --output json 2>/dev/null | tr -d '\r\n' || echo "[]")"
+        EGRESS_JSON="$((aws ec2 describe-security-groups --region "$TARGET_REGION" \
+          --group-ids "$sg" --query "SecurityGroups[0].IpPermissionsEgress" --output json 2>/dev/null || echo "[]") | tr -d '\r\n' || echo "[]")"
         if [ -n "$EGRESS_JSON" ] && [ "$EGRESS_JSON" != "[]" ] && [ "$EGRESS_JSON" != "null" ]; then
           aws ec2 revoke-security-group-egress --region "$TARGET_REGION" --group-id "$sg" --ip-permissions "$EGRESS_JSON" >/dev/null 2>&1 || true
         fi
       done
 
       for pass in 1 2 3; do
-        REMAINING_SGS="$(aws ec2 describe-security-groups --region "$TARGET_REGION" \
+        REMAINING_SGS="$((aws ec2 describe-security-groups --region "$TARGET_REGION" \
           --filters "Name=vpc-id,Values=${vpc_id}" \
-          --query "SecurityGroups[?GroupName!='default'].GroupId" --output text 2>/dev/null | dedup_words)"
+          --query "SecurityGroups[?GroupName!='default'].GroupId" --output text 2>/dev/null || true) | dedup_words || true)"
         [ -z "$REMAINING_SGS" ] && break
         for sg in $REMAINING_SGS; do
           echo "          Eliminando Security Group: $sg"
@@ -348,34 +351,34 @@ if [ -n "$VPC_IDS" ]; then
     fi
 
     # Eliminar Subnets
-    SUBNET_IDS="$(aws ec2 describe-subnets --region "$TARGET_REGION" \
+    SUBNET_IDS="$((aws ec2 describe-subnets --region "$TARGET_REGION" \
       --filters "Name=vpc-id,Values=${vpc_id}" \
-      --query "Subnets[].SubnetId" --output text 2>/dev/null | dedup_words)"
+      --query "Subnets[].SubnetId" --output text 2>/dev/null || true) | dedup_words || true)"
     for subnet in $SUBNET_IDS; do
       echo "          Eliminando Subnet: $subnet"
       aws ec2 delete-subnet --region "$TARGET_REGION" --subnet-id "$subnet" >/dev/null 2>&1 || true
     done
 
     # Desasociar y eliminar Route Tables no-main
-    RTB_ASSOCS="$(aws ec2 describe-route-tables --region "$TARGET_REGION" \
+    RTB_ASSOCS="$((aws ec2 describe-route-tables --region "$TARGET_REGION" \
       --filters "Name=vpc-id,Values=${vpc_id}" \
-      --query "RouteTables[].Associations[?!Main].RouteTableAssociationId" --output text 2>/dev/null | dedup_words)"
+      --query "RouteTables[].Associations[?!Main].RouteTableAssociationId" --output text 2>/dev/null || true) | dedup_words || true)"
     for assoc in $RTB_ASSOCS; do
       aws ec2 disassociate-route-table --region "$TARGET_REGION" --association-id "$assoc" >/dev/null 2>&1 || true
     done
 
-    RTB_IDS="$(aws ec2 describe-route-tables --region "$TARGET_REGION" \
+    RTB_IDS="$((aws ec2 describe-route-tables --region "$TARGET_REGION" \
       --filters "Name=vpc-id,Values=${vpc_id}" \
-      --query "RouteTables[?!(Associations[?Main])].RouteTableId" --output text 2>/dev/null | dedup_words)"
+      --query "RouteTables[?!(Associations[?Main])].RouteTableId" --output text 2>/dev/null || true) | dedup_words || true)"
     for rtb in $RTB_IDS; do
       echo "          Eliminando Route Table: $rtb"
       aws ec2 delete-route-table --region "$TARGET_REGION" --route-table-id "$rtb" >/dev/null 2>&1 || true
     done
 
     # Desacoplar y eliminar Internet Gateways
-    IGW_IDS="$(aws ec2 describe-internet-gateways --region "$TARGET_REGION" \
+    IGW_IDS="$((aws ec2 describe-internet-gateways --region "$TARGET_REGION" \
       --filters "Name=attachment.vpc-id,Values=${vpc_id}" \
-      --query "InternetGateways[].InternetGatewayId" --output text 2>/dev/null | dedup_words)"
+      --query "InternetGateways[].InternetGatewayId" --output text 2>/dev/null || true) | dedup_words || true)"
     for igw in $IGW_IDS; do
       echo "          Desacoplando y eliminando IGW: $igw"
       aws ec2 detach-internet-gateway --region "$TARGET_REGION" --internet-gateway-id "$igw" --vpc-id "$vpc_id" >/dev/null 2>&1 || true
