@@ -12,7 +12,7 @@
 ## Índice
 
 1. [Arquitectura del Proyecto y Seguridad (OWASP ASVS v5.0 Nivel 3)](#1-arquitectura-del-proyecto-y-seguridad-owasp-asvs-v50-nivel-3)
-2. [Prerrequisitos desde Cero (Cuenta AWS, IAM Access Key y Herramientas)](#2-prerrequisitos-desde-cero-cuenta-aws-iam-access-key-y-herramientas)
+2. [Prerrequisitos desde Cero (AWS Academy LabRole y Herramientas)](#2-prerrequisitos-desde-cero-aws-academy-labrole-y-herramientas)
 3. [Paso 1: Desplegar toda la Infraestructura AWS con Script 1](#3-paso-1-desplegar-toda-la-infraestructura-aws-con-script-1)
 4. [Paso 2: Configurar Cloudflare Worker Manualmente desde Cero (HTTPS Gratis, Sin Dominio)](#4-paso-2-configurar-cloudflare-worker-manualmente-desde-cero-https-gratis-sin-dominio)
 5. [Paso 3: Probar la Aplicación Desplegada (`/carta`, `/carrito`, `/admin` y los 6 CRUDs)](#5-paso-3-probar-la-aplicación-desplegada-carta-carrito-admin-y-los-6-cruds)
@@ -73,52 +73,54 @@ flowchart TB
 
 ---
 
-## 2. Prerrequisitos desde Cero (Cuenta AWS, IAM Access Key y Herramientas)
+## 2. Prerrequisitos desde Cero (AWS Academy LabRole y Herramientas)
 
 Para ejecutar la automatización necesitas:
-1. Una **cuenta de AWS** (si eres nuevo, AWS ofrece Capa Gratuita / *Free Tier* que cubre `t3.micro`, `db.t3.micro` y 20 GB EBS/RDS durante 12 meses; el Application Load Balancer tiene un costo mínimo por hora mientras esté activo, por eso al final usarás el **Script 2** para destruirlo).
-2. Una **IAM Access Key** (`AWS_ACCESS_KEY_ID` y `AWS_SECRET_ACCESS_KEY`).
-3. **Git, AWS CLI y Terraform** (o usar **AWS CloudShell** directo desde el navegador sin instalar nada en tu PC).
+1. Acceso a **AWS Academy Learner Lab** (rol **`LabRole` / `LabStudent`**) o una cuenta estándar de AWS.
+2. **AWS CloudShell** (en el navegador, sin instalar nada) o **Git, AWS CLI v2 y Terraform** instalados en tu PC.
 
-### 2.1. Crear o iniciar sesión en AWS y generar una IAM Access Key
-
-1. Entra a [https://console.aws.amazon.com/](https://console.aws.amazon.com/) e inicia sesión con tu cuenta (si la acabas de crear, espera a que AWS confirme la activación de la cuenta).
-2. En la barra de búsqueda superior de la consola de AWS escribe **`IAM`** y entra al servicio **IAM**.
-3. En el menú izquierdo haz clic en **Users** -> **Create user** (o selecciona tu usuario administrador si ya tienes uno):
-   - **User name:** por ejemplo `pnk-deploy-admin`.
-   - Clic en **Next**.
-4. En **Permissions options**, elige **Attach policies directly**:
-   - Para este laboratorio, marca **`AdministratorAccess`** (o una política con permisos sobre VPC, EC2, RDS, Elastic Load Balancing, Auto Scaling e IAM).
-   - Clic en **Next** -> **Create user**.
-5. Haz clic sobre el usuario recién creado (`pnk-deploy-admin`) y ve a la pestaña **Security credentials**.
-6. Baja hasta **Access keys** y haz clic en **Create access key**:
-   - Selecciona **Command Line Interface (CLI)**.
-   - Marca la casilla de confirmación al final y haz clic en **Next** -> **Create access key**.
-7. **Copia y guarda ambos valores en un lugar seguro** (no vuelves a ver el *Secret* después de cerrar esa pantalla):
-   - **Access key** (`AWS_ACCESS_KEY_ID`, empieza por `AKIA...`)
-   - **Secret access key** (`AWS_SECRET_ACCESS_KEY`)
+> [!IMPORTANT]
+> **Si usas AWS Academy Learner Lab (`LabRole` / `LabStudent`):**
+> - **NO entres a IAM ni intentes crear usuarios (`IAM -> Users -> Create user`).** En Learner Lab la acción `iam:CreateUser` está prohibida y siempre arrojará **`AccessDenied`**.
+> - Tampoco necesitas crear roles IAM: la infraestructura en `infra/aws/` **crea cero recursos `aws_iam_*`** (solo incluye la variable opcional `iam_instance_profile = ""`, que puedes fijar en `"LabInstanceProfile"` únicamente si algún caso futuro lo exigiera).
+> - La región obligatoria en AWS Academy Learner Lab es **`us-east-1` (N. Virginia)**.
 
 ---
 
-### 2.2. Elegir cómo ejecutar los scripts (CloudShell en navegador o tu PC)
+### 2.1. Iniciar AWS Academy Learner Lab (`us-east-1`)
 
-#### Opción Recomendada (Sin instalar herramientas en tu PC): AWS CloudShell
+1. Entra a tu curso en **AWS Academy**, abre **Learner Lab** y haz clic en **Start Lab**.
+2. Espera a que el indicador circular junto a **`AWS`** se ponga en **verde** (puede tardar 1-2 minutos la primera vez).
+3. Haz clic en **`AWS`** para abrir la Consola de AWS y verifica arriba a la derecha que la región seleccionada sea **`us-east-1` (N. Virginia)**.
 
-AWS CloudShell es una terminal Linux gratuita dentro de tu propio navegador que **ya trae `aws` CLI y `git` instalados** y autenticados con tu sesión de AWS.
+Ahora elige **una de las dos opciones** para ejecutar el despliegue:
 
-1. En la esquina superior derecha de la Consola de AWS (al lado de la campana y la región), verifica que la región arriba a la derecha sea **`us-east-1` (N. Virginia)** y haz clic en el ícono **`>_` (CloudShell)**.
-2. Espera unos segundos a que abra la terminal e instala `terraform` (solo la primera vez):
+---
+
+### 2.2. Opción A (Más rápida, dentro del navegador): AWS CloudShell
+
+**AWS CloudShell** es una terminal Linux gratuita dentro de la Consola de AWS que **hereda automáticamente tus credenciales temporales de `LabRole`** (no necesitas copiar llaves ni configurar `~/.aws/credentials`) y ya trae **`git`** y **`aws` CLI** instalados.
+
+1. En la Consola de AWS (asegurando que la región arriba a la derecha sea **`us-east-1`**), haz clic en el ícono **`>_` (CloudShell)** en la barra superior.
+2. Instala **`terraform`** en CloudShell:
    ```bash
    sudo yum install -y yum-utils
    sudo yum-config-manager --add-repo https://rpm.releases.hashicorp.com/AmazonLinux/hashicorp.repo
    sudo yum -y install terraform
    terraform -version
    ```
-3. Con eso listo, puedes saltar directamente al **[Paso 1 (Desplegar con Script 1)](#3-paso-1-desplegar-toda-la-infraestructura-aws-con-script-1)** usando los comandos de Linux/Bash. *(Si usas CloudShell, ni siquiera necesitas ejecutar `aws configure`, aunque puedes verificar tu identidad con `aws sts get-caller-identity`).*
+3. Comprueba que ya estás autenticado con `LabRole`:
+   ```bash
+   aws sts get-caller-identity
+   ```
+   Verás un JSON con `"Arn": "arn:aws:sts::<ACCOUNT_ID>:assumed-role/voclabs/user..."`.
+4. Salta directo al **[Paso 1 (Desplegar con Script 1)](#3-paso-1-desplegar-toda-la-infraestructura-aws-con-script-1)** usando los comandos de Linux/Bash (`./1-desplegar-aws.sh`).
 
 ---
 
-#### Opción Local: Instalar Git, AWS CLI v2 y Terraform en tu computadora
+### 2.3. Opción B (Desde tu PC en Windows PowerShell o Linux/macOS): Credenciales temporales con `aws_session_token`
+
+#### Paso B.1. Instalar Git, AWS CLI v2 y Terraform en tu PC
 
 Elige tu sistema operativo:
 
@@ -179,31 +181,57 @@ git --version && aws --version && terraform -version
 
 </details>
 
+#### Paso B.2. Copiar `[default]` desde "AWS Details -> AWS CLI: Show" hacia `~/.aws/credentials`
+
+> [!WARNING]
+> **¿Por qué NO debes usar solo `aws configure` en AWS Academy?**  
+> El comando `aws configure` únicamente solicita `aws_access_key_id` y `aws_secret_access_key`, pero **NO pide `aws_session_token`**. En AWS Academy Learner Lab las credenciales son temporales (empiezan por `ASIA...`) y **sin `aws_session_token` AWS CLI falla con `InvalidClientTokenId`**.
+
+1. Regresa a la pestaña del portal **AWS Academy Learner Lab** (donde presionaste **Start Lab**) y haz clic en **AWS Details**.
+2. En la fila **AWS CLI:**, haz clic en **Show** y luego en **Copy** para copiar todo el bloque `[default]`:
+   ```ini
+   [default]
+   aws_access_key_id=ASIA...
+   aws_secret_access_key=...
+   aws_session_token=...
+   ```
+3. Pega ese bloque completo en tu archivo local de credenciales de AWS:
+   - **Windows (PowerShell):** ejecuta este comando de una sola línea para crear/abrir `C:\Users\<TuUsuario>\.aws\credentials`, borra cualquier contenido viejo, pega el bloque `[default]` y guarda (`Ctrl+S`):
+     ```powershell
+     New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.aws" | Out-Null; notepad "$env:USERPROFILE\.aws\credentials"
+     ```
+   - **Linux / macOS:** abre `~/.aws/credentials`, pega el bloque `[default]`, guarda y protege los permisos:
+     ```bash
+     mkdir -p ~/.aws && chmod 700 ~/.aws && nano ~/.aws/credentials && chmod 600 ~/.aws/credentials
+     ```
+4. Configura la región obligatoria **`us-east-1`** y formato JSON:
+   ```bash
+   aws configure set region us-east-1
+   aws configure set output json
+   ```
+   *(Opcionalmente en la sesión actual: `$env:AWS_DEFAULT_REGION = "us-east-1"` en PowerShell o `export AWS_DEFAULT_REGION=us-east-1` en Bash).*
+5. Verifica que la conexión con AWS funciona:
+   ```bash
+   aws sts get-caller-identity
+   ```
+   Debe responder un JSON con `"Account"`, `"UserId"` y `"Arn"` (`arn:aws:sts::<ACCOUNT_ID>:assumed-role/voclabs/user...`).
+
+> [!NOTE]
+> **Expiración de sesión (~4 horas) en AWS Academy:**  
+> Las credenciales temporales de Learner Lab expiran tras ~4 horas (o cuando termina el temporizador del laboratorio). Si en algún momento aparece **`ExpiredToken`**, vuelve a hacer clic en **Start Lab** (si se detuvo), abre **AWS Details -> AWS CLI: Show -> Copy** y reemplaza el contenido de `~/.aws/credentials` con el bloque fresco.
+
 ---
 
-### 2.3. Configurar AWS CLI en tu PC (`aws configure`)
+<details>
+<summary><strong>¿Usas una cuenta AWS personal estándar (fuera de AWS Academy)? Ver pasos aquí</strong></summary>
 
-*(Si usas AWS CloudShell, puedes omitir `aws configure` porque CloudShell ya usa tu sesión activa).*
+Si trabajas con una cuenta AWS personal propia (con Capa Gratuita / *Free Tier*):
+1. Entra a [https://console.aws.amazon.com/](https://console.aws.amazon.com/), abre **IAM -> Users -> Create user** (ej. `pnk-deploy-admin`) y adjunta `AdministratorAccess` (o permisos para VPC, EC2, RDS, ELB y ASG).
+2. En **Security credentials -> Access keys -> Create access key** (tipo CLI), copia tu `AKIA...` y su Secret Key.
+3. Configura AWS CLI en tu terminal con `aws configure` (región `us-east-1`, formato `json`), o bien usa **AWS CloudShell** directamente en el navegador.
+4. Valida con `aws sts get-caller-identity`.
 
-En tu terminal (PowerShell, Bash o Zsh), ejecuta:
-
-```bash
-aws configure
-```
-
-Ingresa los 4 datos que te pedirá uno por uno:
-1. `AWS Access Key ID`: pega tu **Access key** (`AKIA...`).
-2. `AWS Secret Access Key`: pega tu **Secret access key**.
-3. `Default region name`: escribe **`us-east-1`**.
-4. `Default output format`: escribe **`json`**.
-
-Verifica que la conexión con AWS funciona correctamente:
-
-```bash
-aws sts get-caller-identity
-```
-
-Debe responder un JSON con tu `"Account"`, `"UserId"` y `"Arn"`.
+</details>
 
 ---
 
@@ -550,6 +578,7 @@ Desde la carpeta `infra/aws`:
 | **`Error 502` o `503` al abrir Cloudflare justo después de Script 1** | La EC2 sigue descargando paquetes y compilando las imágenes Docker (~3 a 5 min). | Espera 2-3 minutos y prueba `curl -i http://<ELASTIC_IP>/health`. Si tarda más, entra por SSH y ejecuta `sudo tail -f /var/log/pnk-userdata.log`. |
 | **Cloudflare muestra `Error 1003: Direct IP access not allowed`** | Se ingresó la IP sola en un servicio sin usar `.sslip.io`. | Usa el valor `cloudflare_origin_url_alb` (`http://<ALB_DNS>`) o `cloudflare_origin_url_eip` (`http://<ELASTIC_IP>.sslip.io`) en la variable `EC2_ORIGIN_URL`. |
 | **Cloudflare dice `"Falta configurar la IP publica de tu AWS EC2 en EC2_ORIGIN_URL"`** | No se guardó la variable en *Runtime* (`Variables and Secrets`) o se puso solo en *Build variables*. | Ve al Worker -> **Settings -> Variables and Secrets**, crea `EC2_ORIGIN_URL` de tipo `Text` y vuelve a desplegar (**Deploy**). |
-| **`aws sts get-caller-identity` falla o dice credenciales inválidas** | No ejecutaste `aws configure` o la Access Key está mal copiada/inactiva. | Ejecuta `aws configure` nuevamente en tu terminal y valida con `aws sts get-caller-identity`. |
+| **`aws sts get-caller-identity` falla (`InvalidClientTokenId` / `ExpiredToken`)** | En AWS Academy (`LabRole`), faltó `aws_session_token` (por usar solo `aws configure`) o el token temporal expiró (~4 horas). | Abre **AWS Details -> AWS CLI: Show -> Copy**, pega el bloque `[default]` completo en `~/.aws/credentials` (Windows: `notepad "$env:USERPROFILE\.aws\credentials"`), fija región `us-east-1` (`aws configure set region us-east-1`) y valida con `aws sts get-caller-identity`. |
+| **`AccessDenied` al intentar crear usuarios o roles en IAM** | AWS Academy Learner Lab (`LabRole` / `LabStudent`) prohíbe `iam:CreateUser` y `iam:CreateRole`. | No entres a IAM a crear usuarios ni ejecutes scripts que creen roles. Usa **AWS CloudShell** o **AWS Details** (`LabRole`), y mantén `iam_instance_profile` vacío (por defecto) o usa `"LabInstanceProfile"` solo si se requiere. |
 | **Windows PowerShell bloquea `.\1-desplegar-aws.ps1`** | Política `ExecutionPolicy` restringida en Windows. | Ejecuta `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` en la misma ventana de PowerShell y vuelve a correr el script. |
 | **SSH falla por permisos demasiado abiertos en `.pem` (Linux/macOS)** | OpenSSH rechaza llaves privadas legibles por otros usuarios. | Ejecuta `chmod 600 infra/aws/pnk-ec2-deploy-key.pem` antes de conectarte por SSH. |

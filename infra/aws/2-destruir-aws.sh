@@ -30,7 +30,19 @@ if ! command -v terraform >/dev/null 2>&1; then
 fi
 
 if ! aws sts get-caller-identity >/dev/null 2>&1; then
-  echo "[ERROR] No hay credenciales activas de AWS configuradas. Ejecuta 'aws configure'."
+  echo ""
+  echo "[ERROR] No hay credenciales activas de AWS configuradas o el token temporal expiró."
+  echo ""
+  echo "Si usas AWS Academy Learner Lab (LabStudent / LabRole):"
+  echo "  1. Verifica en el portal que el laboratorio esté activo ('Start Lab' en verde)."
+  echo "  2. Haz clic en 'AWS Details' -> 'AWS CLI: Show' -> 'Copy'."
+  echo "  3. Pega el bloque [default] completo (aws_access_key_id, aws_secret_access_key y"
+  echo "     aws_session_token) en ~/.aws/credentials."
+  echo "     (IMPORTANTE: 'aws configure' NO pide aws_session_token; si expiró tras ~4h, copia credenciales nuevas)."
+  echo "  4. Verifica la región us-east-1: aws configure set region us-east-1  (o export AWS_DEFAULT_REGION=us-east-1)."
+  echo "  5. Alternativa sin copiar llaves: ejecuta ./2-destruir-aws.sh desde AWS CloudShell (us-east-1)."
+  echo ""
+  echo "Si usas una cuenta AWS personal estándar: ejecuta 'aws configure' (región us-east-1)."
   exit 1
 fi
 

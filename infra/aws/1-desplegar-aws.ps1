@@ -27,12 +27,23 @@ Write-Host "[1/4] Verificando credenciales activas de AWS CLI..."
 $identityJson = aws sts get-caller-identity 2>$null
 if ($LASTEXITCODE -ne 0) {
     Write-Host ""
-    Write-Host "[ERROR] No hay credenciales activas de AWS configuradas." -ForegroundColor Red
-    Write-Host "Ejecuta 'aws configure' e ingresa:"
-    Write-Host "  - AWS Access Key ID:     <tu Access Key de IAM>"
-    Write-Host "  - AWS Secret Access Key: <tu Secret Key de IAM>"
-    Write-Host "  - Default region name:   us-east-1"
-    Write-Host "  - Default output format: json"
+    Write-Host "[ERROR] No hay credenciales activas de AWS configuradas o el token temporal expiro." -ForegroundColor Red
+    Write-Host ""
+    Write-Host "Si usas AWS Academy Learner Lab (LabStudent / LabRole):" -ForegroundColor Yellow
+    Write-Host "  1. Verifica en el portal que el laboratorio este activo ('Start Lab' en verde)."
+    Write-Host "  2. Haz clic en 'AWS Details' -> 'AWS CLI: Show' -> 'Copy'."
+    Write-Host "  3. Pega el bloque [default] completo (aws_access_key_id, aws_secret_access_key y"
+    Write-Host "     aws_session_token) en: $env:USERPROFILE\.aws\credentials"
+    Write-Host "     Comando rapido en PowerShell:"
+    Write-Host "       New-Item -ItemType Directory -Force -Path `$env:USERPROFILE\.aws | Out-Null; notepad `$env:USERPROFILE\.aws\credentials"
+    Write-Host "     (IMPORTANTE: 'aws configure' NO pide aws_session_token; sin el falla con InvalidClientTokenId)."
+    Write-Host "     (Si aparecio ExpiredToken tras ~4h, vuelve a copiar credenciales frescas desde AWS Details)."
+    Write-Host "  4. Verifica que la region sea us-east-1 (requerida por Learner Lab):"
+    Write-Host "       aws configure set region us-east-1"
+    Write-Host "       `$env:AWS_DEFAULT_REGION = 'us-east-1'"
+    Write-Host "  5. Alternativa sin copiar llaves: ejecuta ./1-desplegar-aws.sh desde AWS CloudShell (us-east-1)."
+    Write-Host ""
+    Write-Host "Si usas una cuenta AWS personal estandar: ejecuta 'aws configure' (region us-east-1)." -ForegroundColor Cyan
     exit 1
 }
 $identity = $identityJson | ConvertFrom-Json

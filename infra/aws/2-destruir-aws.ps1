@@ -27,7 +27,21 @@ if (-not (Get-Command terraform -ErrorAction SilentlyContinue)) {
 
 $null = aws sts get-caller-identity 2>$null
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "[ERROR] No hay credenciales activas de AWS configuradas. Ejecuta 'aws configure'." -ForegroundColor Red
+    Write-Host ""
+    Write-Host "[ERROR] No hay credenciales activas de AWS configuradas o el token temporal expiro." -ForegroundColor Red
+    Write-Host ""
+    Write-Host "Si usas AWS Academy Learner Lab (LabStudent / LabRole):" -ForegroundColor Yellow
+    Write-Host "  1. Verifica en el portal que el laboratorio este activo ('Start Lab' en verde)."
+    Write-Host "  2. Haz clic en 'AWS Details' -> 'AWS CLI: Show' -> 'Copy'."
+    Write-Host "  3. Pega el bloque [default] completo (aws_access_key_id, aws_secret_access_key y"
+    Write-Host "     aws_session_token) en: $env:USERPROFILE\.aws\credentials"
+    Write-Host "     Comando rapido en PowerShell:"
+    Write-Host "       New-Item -ItemType Directory -Force -Path `$env:USERPROFILE\.aws | Out-Null; notepad `$env:USERPROFILE\.aws\credentials"
+    Write-Host "     (IMPORTANTE: 'aws configure' NO pide aws_session_token; si expiro tras ~4h, copia credenciales nuevas)."
+    Write-Host "  4. Verifica la region us-east-1: aws configure set region us-east-1  (o `$env:AWS_DEFAULT_REGION = 'us-east-1')."
+    Write-Host "  5. Alternativa sin copiar llaves: ejecuta ./2-destruir-aws.sh desde AWS CloudShell (us-east-1)."
+    Write-Host ""
+    Write-Host "Si usas una cuenta AWS personal estandar: ejecuta 'aws configure' (region us-east-1)." -ForegroundColor Cyan
     exit 1
 }
 

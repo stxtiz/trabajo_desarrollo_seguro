@@ -39,6 +39,7 @@ resource "aws_instance" "primary" {
   subnet_id                   = aws_subnet.public[0].id
   vpc_security_group_ids      = [aws_security_group.ec2_sg.id]
   key_name                    = aws_key_pair.deploy_key.key_name
+  iam_instance_profile        = var.iam_instance_profile != "" ? var.iam_instance_profile : null
   associate_public_ip_address = true
   user_data                   = local.rendered_user_data
   user_data_replace_on_change = true
@@ -136,6 +137,13 @@ resource "aws_launch_template" "app" {
   instance_type = var.instance_type
   key_name      = aws_key_pair.deploy_key.key_name
   user_data     = base64encode(local.rendered_user_data)
+
+  dynamic "iam_instance_profile" {
+    for_each = var.iam_instance_profile != "" ? [var.iam_instance_profile] : []
+    content {
+      name = iam_instance_profile.value
+    }
+  }
 
   network_interfaces {
     associate_public_ip_address = true
