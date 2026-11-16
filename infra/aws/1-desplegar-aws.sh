@@ -2,6 +2,8 @@
 # =============================================================================
 # SCRIPT 1: DESPLIEGUE COMPLETO DESDE CERO EN AWS (TERRAFORM + AWS CLI)
 # Proyecto: Carta Digital PNK Security (OWASP ASVS v5.0 Nivel 3)
+# Uso: ./1-desplegar-aws.sh      (despliegue interactivo si hay huerfanos)
+#      ./1-desplegar-aws.sh -y   (limpia huerfanos sin terraform.tfstate automaticamente)
 # =============================================================================
 set -euo pipefail
 
@@ -9,6 +11,14 @@ export PATH="$HOME/bin:$PATH"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
+
+AUTO_CONFIRM="false"
+if [ "${1:-}" = "-y" ] || [ "${1:-}" = "--yes" ]; then
+  AUTO_CONFIRM="true"
+fi
+
+PROJECT_PREFIX="pnk-carta-digital"
+TARGET_REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}"
 
 echo "============================================================================="
 echo "  PNK Security - Script 1: Despliegue Completo de Infraestructura AWS"
@@ -69,6 +79,73 @@ fi
 ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
 CALLER_ARN="$(aws sts get-caller-identity --query Arn --output text)"
 echo "  Cuenta AWS verificada: $ACCOUNT_ID ($CALLER_ARN)"
+
+# 2b. Verificar si existen recursos huerfanos en AWS sin terraform.tfstate local (ej. CloudShell reiniciado)
+HAS_LOCAL_STATE="false"
+if [ -s "terraform.tfstate" ] && grep -q '"type":' terraform.tfstate 2>/dev/null; then
+  HAS_LOCAL_STATE="true"
+fi
+
+if [ "$HAS_LOCAL_STATE" != "true" ]; then
+  ORPHAN_LIST=""
+  EXISTING_VPC="$(aws ec2 describe-vpcs --region "$TARGET_REGION" \
+    --filters "Name=tag:Name,Values=${PROJECT_PREFIX}-vpc" \
+    --query "Vpcs[0].VpcId" --output text 2>/dev/null || echo "")"
+  if [ -n "$EXISTING_VPC" ] && [ "$EXISTING_VPC" != "None" ]; then
+    ORPHAN_LIST="${ORPHAN_LIST} VPC(${EXISTING_VPC})"
+  fi
+
+  EXISTING_KEY="$(aws ec2 describe-key-pairs --region "$TARGET_REGION" \
+    --key-names "${PROJECT_PREFIX}-deploy-key" \
+    --query "KeyPairs[0].KeyName" --output text 2>/dev/null || echo "")"
+  if [ -n "$EXISTING_KEY" ] && [ "$EXISTING_KEY" != "None" ]; then
+    ORPHAN_LIST="${ORPHAN_LIST} KeyPair(${EXISTING_KEY})"
+  fi
+
+  EXISTING_RDS="$(aws rds describe-db-instances --region "$TARGET_REGION" \
+    --db-instance-identifier "${PROJECT_PREFIX}-postgres" \
+    --query "DBInstances[0].DBInstanceIdentifier" --output text 2>/dev/null || echo "")"
+  if [ -n "$EXISTING_RDS" ] && [ "$EXISTING_RDS" != "None" ]; then
+    ORPHAN_LIST="${ORPHAN_LIST} RDS(${EXISTING_RDS})"
+  fi
+
+  EXISTING_ALB="$(aws elbv2 describe-load-balancers --region "$TARGET_REGION" \
+    --names "${PROJECT_PREFIX}-alb" \
+    --query "LoadBalancers[0].LoadBalancerName" --output text 2>/dev/null || echo "")"
+  if [ -n "$EXISTING_ALB" ] && [ "$EXISTING_ALB" != "None" ]; then
+    ORPHAN_LIST="${ORPHAN_LIST} ALB(${EXISTING_ALB})"
+  fi
+
+  EXISTING_ASG="$(aws autoscaling describe-auto-scaling-groups --region "$TARGET_REGION" \
+    --auto-scaling-group-names "${PROJECT_PREFIX}-asg" \
+    --query "AutoScalingGroups[0].AutoScalingGroupName" --output text 2>/dev/null || echo "")"
+  if [ -n "$EXISTING_ASG" ] && [ "$EXISTING_ASG" != "None" ]; then
+    ORPHAN_LIST="${ORPHAN_LIST} ASG(${EXISTING_ASG})"
+  fi
+
+  if [ -n "$ORPHAN_LIST" ]; then
+    echo ""
+    echo "[AVISO] No hay 'terraform.tfstate' local, pero ya existen recursos previos en AWS (${TARGET_REGION}):"
+    echo "       ${ORPHAN_LIST}"
+    echo "        (Esto ocurre si se perdió la sesión de CloudShell o se clonó el repo en otra carpeta.)"
+    echo "        Terraform fallará con errores de recursos duplicados si no se limpian primero."
+    if [ "$AUTO_CONFIRM" = "true" ]; then
+      echo "  Limpiando automáticamente recursos huérfanos con ./2-destruir-aws.sh -y..."
+      bash "$SCRIPT_DIR/2-destruir-aws.sh" -y
+    else
+      read -r -p "¿Deseas ejecutar './2-destruir-aws.sh -y' ahora para limpiar los recursos previos y continuar? [s/N]: " CLEAN_CONFIRM
+      case "$CLEAN_CONFIRM" in
+        s|S|si|SI|y|Y|yes|YES)
+          bash "$SCRIPT_DIR/2-destruir-aws.sh" -y
+          ;;
+        *)
+          echo "Despliegue cancelado. Ejecuta './2-destruir-aws.sh' manualmente antes de volver a desplegar."
+          exit 1
+          ;;
+      esac
+    fi
+  fi
+fi
 
 # 3. Inicializar y validar Terraform
 echo ""
