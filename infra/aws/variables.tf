@@ -28,7 +28,7 @@ variable "vpc_cidr" {
 }
 
 variable "public_subnet_cidrs" {
-  description = "CIDRs de las 2 subredes públicas (ALB, EC2 Primaria y ASG)"
+  description = "CIDRs de las 2 subredes públicas (ALB y Auto Scaling Group)"
   type        = list(string)
   default     = ["10.20.1.0/24", "10.20.2.0/24"]
 }
@@ -100,15 +100,15 @@ variable "cors_origin" {
 }
 
 variable "asg_min_size" {
-  description = "Cantidad mínima de instancias en el Auto Scaling Group"
+  description = "Cantidad mínima de instancias en el Auto Scaling Group (2 en 2 AZs para cero downtime)"
   type        = number
-  default     = 1
+  default     = 2
 }
 
 variable "asg_desired_capacity" {
   description = "Cantidad deseada de instancias en el Auto Scaling Group"
   type        = number
-  default     = 1
+  default     = 2
 }
 
 variable "asg_max_size" {
@@ -118,7 +118,7 @@ variable "asg_max_size" {
 }
 
 variable "iam_instance_profile" {
-  description = "Nombre opcional de Instance Profile IAM preexistente para EC2 (ej. 'LabInstanceProfile' en AWS Academy si se requiere). Vacío por defecto para no invocar iam:CreateRole ni iam:PassRole."
+  description = "Nombre del Instance Profile IAM preexistente para EC2 (por defecto 'LabInstanceProfile' de AWS Academy para auto-reemplazo y re-asociación automática de Elastic IP; dejar vacío '' si tu cuenta personal no lo tiene)."
   type        = string
-  default     = ""
+  default     = "LabInstanceProfile"
 }

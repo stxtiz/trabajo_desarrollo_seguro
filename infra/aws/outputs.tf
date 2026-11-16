@@ -3,8 +3,13 @@
 # =============================================================================
 
 output "elastic_ip" {
-  description = "Elastic IP pública asignada a la instancia EC2 primaria (usar en AWS_EC2_HOST)"
+  description = "Elastic IP pública fija asignada automáticamente a la instancia EC2 activa del ASG (usar en AWS_EC2_HOST)"
   value       = aws_eip.primary.public_ip
+}
+
+output "elastic_ip_allocation_id" {
+  description = "Allocation ID de la Elastic IP fija para re-asociación automática del ASG"
+  value       = aws_eip.primary.id
 }
 
 output "cloudflare_origin_url_eip" {
@@ -33,7 +38,7 @@ output "ssh_private_key_path" {
 }
 
 output "ssh_command" {
-  description = "Comando SSH listo para conectarse a la instancia EC2 primaria"
+  description = "Comando SSH listo para conectarse a la instancia EC2 activa del Auto Scaling Group"
   value       = "ssh -i ${local_file.private_key_pem.filename} ubuntu@${aws_eip.primary.public_ip}"
 }
 
