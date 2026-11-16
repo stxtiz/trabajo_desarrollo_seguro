@@ -102,16 +102,14 @@ Ahora elige **una de las dos opciones** para ejecutar el despliegue:
 
 ### 2.2. Opción A (Más rápida, dentro del navegador): AWS CloudShell
 
-**AWS CloudShell** es una terminal Linux gratuita dentro de la Consola de AWS que **hereda automáticamente tus credenciales temporales de `LabRole`** (no necesitas copiar llaves ni configurar `~/.aws/credentials`) y ya trae **`git`** y **`aws` CLI** instalados.
+**AWS CloudShell** es una terminal Linux gratuita dentro de la Consola de AWS que **hereda automáticamente tus credenciales temporales de `LabRole`** (no necesitas copiar llaves ni configurar `~/.aws/credentials`) y ya trae **`git`**, **`curl`**, **`unzip`** y **`aws` CLI** instalados.
 
 1. En la Consola de AWS (asegurando que la región arriba a la derecha sea **`us-east-1`**), haz clic en el ícono **`>_` (CloudShell)** en la barra superior.
-2. Instala **`terraform`** en CloudShell:
-   ```bash
-   sudo yum install -y yum-utils
-   sudo yum-config-manager --add-repo https://rpm.releases.hashicorp.com/AmazonLinux/hashicorp.repo
-   sudo yum -y install terraform
-   terraform -version
-   ```
+2. **No necesitas instalar Terraform manualmente:** los scripts `1-desplegar-aws.sh` y `2-destruir-aws.sh` incluyen `export PATH="$HOME/bin:$PATH"` y **descargan e instalan automáticamente Terraform `1.11.2` en `~/bin/terraform` (dentro de tu directorio persistente `$HOME`)** si no está presente. A diferencia de `/usr/bin` (que se borra cuando CloudShell se reinicia o expira por inactividad), **`$HOME/bin` persiste permanentemente entre sesiones de CloudShell**.
+   - *(Opcional)* Si prefieres instalarlo en `~/bin` antes de correr los scripts, puedes usar este comando de una sola línea:
+     ```bash
+     mkdir -p ~/bin && ARCH=$(uname -m) && TF_ARCH=$([ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ] && echo arm64 || echo amd64) && curl -fsSL "https://releases.hashicorp.com/terraform/1.11.2/terraform_1.11.2_linux_${TF_ARCH}.zip" -o /tmp/tf.zip && unzip -o -q /tmp/tf.zip -d ~/bin && chmod +x ~/bin/terraform && rm -f /tmp/tf.zip && export PATH="$HOME/bin:$PATH" && terraform -version
+     ```
 3. Comprueba que ya estás autenticado con `LabRole`:
    ```bash
    aws sts get-caller-identity
@@ -605,3 +603,4 @@ Desde la carpeta `infra/aws`:
 | **Windows PowerShell bloquea `.\1-desplegar-aws.ps1`** | Política `ExecutionPolicy` restringida en Windows. | Ejecuta `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` en la misma ventana de PowerShell y vuelve a correr el script. |
 | **SSH falla por permisos demasiado abiertos en `.pem` (Linux/macOS)** | OpenSSH rechaza llaves privadas legibles por otros usuarios. | Ejecuta `chmod 600 infra/aws/pnk-ec2-deploy-key.pem` antes de conectarte por SSH. |
 | **No existe la carpeta `infra/aws` después de hacer `git clone`** | Hiciste `git clone` sin indicar la rama y Git descargó la rama antigua `main` (PHP). | Ejecuta `git fetch origin produccion:produccion && git checkout produccion`, o clona directamente con `git clone -b produccion --single-branch https://github.com/stxtiz/trabajo_desarrollo_seguro.git`. |
+| **`terraform: command not found` tras reiniciar AWS CloudShell (después de usar `sudo yum install terraform`)** | En AWS CloudShell, el sistema operativo base (`/usr/bin`, paquetes `yum`) es efímero y se reinicia tras expirar la sesión; únicamente `$HOME` (hasta 1 GB) es persistente. | Ejecuta `./1-desplegar-aws.sh` o `./2-destruir-aws.sh`: ambos scripts exportan `PATH="$HOME/bin:$PATH"` e instalan automáticamente Terraform en `$HOME/bin/terraform`, por lo que persiste de forma permanente entre reinicios de CloudShell sin usar `yum`. |
