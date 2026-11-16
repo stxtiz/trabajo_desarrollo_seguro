@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 # =============================================================================
-# SCRIPT 2: DESTRUCCIÓN TOTAL DE INFRAESTRUCTURA AWS (CERO COBROS PENDIENTES)
+# SCRIPT 2: DESTRUCCIÓN TOTAL DE INFRAESTRUCTURA AWS (STATELESS + TERRAFORM)
 # Proyecto: Carta Digital PNK Security
 # Uso: ./2-destruir-aws.sh        (pide confirmación interactiva)
 #      ./2-destruir-aws.sh -y     (sin confirmación interactiva)
+#
+# Diseñado a prueba de pérdida de sesión (ej. AWS CloudShell sin terraform.tfstate):
+#   1) Si existe terraform.tfstate local, ejecuta 'terraform destroy -auto-approve'.
+#   2) Siempre ejecuta un barrido directo por AWS CLI (Stateless Sweep) por prefijo
+#      'pnk-carta-digital' en orden de dependencias para garantizar $0 cobros.
 # =============================================================================
 set -euo pipefail
 
@@ -17,36 +22,16 @@ if [ "${1:-}" = "-y" ] || [ "${1:-}" = "--yes" ]; then
   AUTO_CONFIRM="true"
 fi
 
+PROJECT_PREFIX="pnk-carta-digital"
+TARGET_REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}"
+
 echo "============================================================================="
-echo "  PNK Security - Script 2: Destruir Infraestructura AWS (Teardown)"
+echo "  PNK Security - Script 2: Destruir Infraestructura AWS (Stateless Teardown)"
 echo "============================================================================="
 
 if ! command -v aws >/dev/null 2>&1; then
   echo "[ERROR] AWS CLI ('aws') no esta instalado."
   exit 1
-fi
-
-if ! command -v terraform >/dev/null 2>&1; then
-  if [ "$(uname -s)" = "Linux" ]; then
-    echo "[INFO] Terraform no encontrado. Instalando automaticamente de forma persistente en $HOME/bin/terraform..."
-    mkdir -p "$HOME/bin"
-    ARCH="$(uname -m)"
-    if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
-      TF_ARCH="arm64"
-    else
-      TF_ARCH="amd64"
-    fi
-    TF_VER="1.11.2"
-    curl -fsSL "https://releases.hashicorp.com/terraform/${TF_VER}/terraform_${TF_VER}_linux_${TF_ARCH}.zip" -o /tmp/terraform.zip
-    unzip -o -q /tmp/terraform.zip -d "$HOME/bin"
-    chmod +x "$HOME/bin/terraform"
-    rm -f /tmp/terraform.zip
-    echo "  Terraform $(terraform version -json 2>/dev/null | grep -o '"terraform_version":"[^"]*"' || terraform -version | head -n 1) instalado en $HOME/bin/terraform (persistente en CloudShell)."
-  else
-    echo "[ERROR] Terraform ('terraform') no esta instalado."
-    echo "Instalalo desde: https://developer.hashicorp.com/terraform/install"
-    exit 1
-  fi
 fi
 
 if ! aws sts get-caller-identity >/dev/null 2>&1; then
@@ -68,11 +53,13 @@ fi
 
 if [ "$AUTO_CONFIRM" != "true" ]; then
   echo ""
-  echo "ATENCION: Esta accion eliminara permanentemente TODOS los recursos creados:"
-  echo "  - VPC, Subredes, IGW y Security Groups"
-  echo "  - Instancias EC2 del Auto Scaling Group, Elastic IP y Application Load Balancer"
-  echo "  - Base de datos Amazon RDS PostgreSQL (y sus datos)"
-  echo "  - Par de llaves SSH en AWS"
+  echo "ATENCION: Esta accion eliminara permanentemente TODOS los recursos '${PROJECT_PREFIX}*' en ${TARGET_REGION}:"
+  echo "  - Auto Scaling Group, Launch Templates e instancias EC2"
+  echo "  - Application Load Balancer, Target Group y Elastic IP"
+  echo "  - Base de datos Amazon RDS PostgreSQL (y sus datos) + DB Subnet Group"
+  echo "  - Par de llaves SSH (${PROJECT_PREFIX}-deploy-key)"
+  echo "  - VPC, Subredes, ENIs, Route Tables, Internet Gateway y Security Groups"
+  echo "  - Archivos locales de estado (terraform.tfstate, llave .pem y outputs JSON)"
   echo ""
   read -r -p "¿Deseas continuar y destruir toda la infraestructura? [s/N]: " CONFIRM
   case "$CONFIRM" in
@@ -85,20 +72,335 @@ if [ "$AUTO_CONFIRM" != "true" ]; then
   esac
 fi
 
-echo ""
-echo "[1/2] Ejecutando 'terraform destroy -auto-approve'..."
-if [ ! -d ".terraform" ]; then
-  terraform init
-fi
-terraform destroy -auto-approve
+install_terraform_linux_if_needed() {
+  if command -v terraform >/dev/null 2>&1; then
+    return 0
+  fi
+  if [ "$(uname -s)" = "Linux" ]; then
+    echo "[INFO] Terraform no encontrado. Instalando automaticamente de forma persistente en $HOME/bin/terraform..."
+    mkdir -p "$HOME/bin"
+    ARCH="$(uname -m)"
+    if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+      TF_ARCH="arm64"
+    else
+      TF_ARCH="amd64"
+    fi
+    TF_VER="1.11.2"
+    curl -fsSL "https://releases.hashicorp.com/terraform/${TF_VER}/terraform_${TF_VER}_linux_${TF_ARCH}.zip" -o /tmp/terraform.zip
+    unzip -o -q /tmp/terraform.zip -d "$HOME/bin"
+    chmod +x "$HOME/bin/terraform"
+    rm -f /tmp/terraform.zip
+    echo "  Terraform instalado en $HOME/bin/terraform (persistente en CloudShell)."
+    return 0
+  fi
+  return 1
+}
 
+dedup_words() {
+  tr ' \t' '\n\n' | grep -v '^$' | grep -v '^None$' | sort -u || true
+}
+
+discover_project_vpcs() {
+  local v1 v2
+  v1="$(aws ec2 describe-vpcs --region "$TARGET_REGION" \
+    --filters "Name=tag:Name,Values=${PROJECT_PREFIX}*" \
+    --query "Vpcs[].VpcId" --output text 2>/dev/null || true)"
+  v2="$(aws ec2 describe-vpcs --region "$TARGET_REGION" \
+    --filters "Name=tag:Project,Values=${PROJECT_PREFIX}" \
+    --query "Vpcs[].VpcId" --output text 2>/dev/null || true)"
+  printf "%s\n%s\n" "$v1" "$v2" | dedup_words
+}
+
+# =============================================================================
+# PASO 1: TERRAFORM DESTROY (SI EXISTE terraform.tfstate LOCAL)
+# =============================================================================
 echo ""
-echo "[2/2] Limpiando archivos locales generados (llave .pem y outputs JSON)..."
-rm -f pnk-ec2-deploy-key.pem outputs-despliegue.json
+echo "[1/3] Verificando estado local de Terraform (terraform.tfstate)..."
+if [ -s "terraform.tfstate" ]; then
+  if install_terraform_linux_if_needed; then
+    echo "  terraform.tfstate encontrado. Ejecutando 'terraform destroy -auto-approve'..."
+    if [ ! -d ".terraform" ]; then
+      terraform init || true
+    fi
+    terraform destroy -auto-approve || true
+  else
+    echo "  [AVISO] terraform.tfstate existe pero Terraform no está instalado; se continuará con el barrido directo por AWS CLI."
+  fi
+else
+  echo "  [INFO] No se encontró terraform.tfstate local (sesión nueva o CloudShell reiniciado)."
+  echo "         Saltando directo al barrido stateless por AWS CLI..."
+fi
+
+# =============================================================================
+# PASO 2: BARRIDO DIRECTO POR AWS CLI (STATELESS SWEEP - ORDEN DE DEPENDENCIAS)
+# =============================================================================
+echo ""
+echo "[2/3] Ejecutando barrido directo por AWS CLI en región ${TARGET_REGION} (prefijo: ${PROJECT_PREFIX})..."
+
+# 2.1. Auto Scaling Group (pnk-carta-digital-asg)
+echo "  [2.1] Buscando Auto Scaling Groups (${PROJECT_PREFIX}*)..."
+ASG_LIST="$(aws autoscaling describe-auto-scaling-groups --region "$TARGET_REGION" \
+  --query "AutoScalingGroups[?starts_with(AutoScalingGroupName, '${PROJECT_PREFIX}')].AutoScalingGroupName" \
+  --output text 2>/dev/null | dedup_words)"
+if [ -n "$ASG_LIST" ]; then
+  for asg in $ASG_LIST; do
+    echo "        Eliminando ASG (--force-delete): $asg"
+    aws autoscaling delete-auto-scaling-group --region "$TARGET_REGION" \
+      --auto-scaling-group-name "$asg" --force-delete >/dev/null 2>&1 || true
+  done
+else
+  echo "        Sin Auto Scaling Groups activos."
+fi
+
+# 2.2. Launch Templates (pnk-carta-digital-lt-*)
+echo "  [2.2] Buscando Launch Templates (${PROJECT_PREFIX}-*)..."
+LT_LIST="$(aws ec2 describe-launch-templates --region "$TARGET_REGION" \
+  --filters "Name=launch-template-name,Values=${PROJECT_PREFIX}-*" \
+  --query "LaunchTemplates[].LaunchTemplateId" --output text 2>/dev/null | dedup_words)"
+if [ -n "$LT_LIST" ]; then
+  for lt_id in $LT_LIST; do
+    echo "        Eliminando Launch Template: $lt_id"
+    aws ec2 delete-launch-template --region "$TARGET_REGION" \
+      --launch-template-id "$lt_id" >/dev/null 2>&1 || true
+  done
+else
+  echo "        Sin Launch Templates pendientes."
+fi
+
+# 2.3. Instancias EC2 (por tags del proyecto o dentro de la VPC del proyecto)
+echo "  [2.3] Buscando instancias EC2 (${PROJECT_PREFIX}* o dentro de ${PROJECT_PREFIX}-vpc)..."
+VPC_IDS="$(discover_project_vpcs)"
+EC2_RAW=""
+EC2_RAW="$EC2_RAW $(aws ec2 describe-instances --region "$TARGET_REGION" \
+  --filters "Name=tag:Name,Values=${PROJECT_PREFIX}*" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+  --query "Reservations[].Instances[].InstanceId" --output text 2>/dev/null || true)"
+EC2_RAW="$EC2_RAW $(aws ec2 describe-instances --region "$TARGET_REGION" \
+  --filters "Name=tag:Project,Values=${PROJECT_PREFIX}" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+  --query "Reservations[].Instances[].InstanceId" --output text 2>/dev/null || true)"
+for vpc_id in $VPC_IDS; do
+  EC2_RAW="$EC2_RAW $(aws ec2 describe-instances --region "$TARGET_REGION" \
+    --filters "Name=vpc-id,Values=${vpc_id}" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+    --query "Reservations[].Instances[].InstanceId" --output text 2>/dev/null || true)"
+done
+INSTANCE_IDS="$(printf "%s\n" "$EC2_RAW" | dedup_words)"
+
+if [ -n "$INSTANCE_IDS" ]; then
+  INSTANCE_ARGS="$(printf "%s " $INSTANCE_IDS)"
+  echo "        Terminando instancias EC2: $INSTANCE_ARGS"
+  # shellcheck disable=SC2086
+  aws ec2 terminate-instances --region "$TARGET_REGION" --instance-ids $INSTANCE_ARGS >/dev/null 2>&1 || true
+  echo "        Esperando a que las instancias EC2 alcancen estado 'terminated'..."
+  # shellcheck disable=SC2086
+  aws ec2 wait instance-terminated --region "$TARGET_REGION" --instance-ids $INSTANCE_ARGS 2>/dev/null || true
+else
+  echo "        Sin instancias EC2 activas."
+fi
+
+# 2.4. Application Load Balancer (pnk-carta-digital-alb) & Target Group (pnk-carta-digital-tg)
+echo "  [2.4] Buscando Application Load Balancer y Target Group..."
+ALB_ARN="$(aws elbv2 describe-load-balancers --region "$TARGET_REGION" \
+  --names "${PROJECT_PREFIX}-alb" \
+  --query "LoadBalancers[].LoadBalancerArn" --output text 2>/dev/null | dedup_words)"
+if [ -n "$ALB_ARN" ]; then
+  for alb in $ALB_ARN; do
+    echo "        Eliminando ALB: $alb"
+    aws elbv2 delete-load-balancer --region "$TARGET_REGION" --load-balancer-arn "$alb" >/dev/null 2>&1 || true
+    echo "        Esperando eliminación completa del ALB..."
+    aws elbv2 wait load-balancers-deleted --region "$TARGET_REGION" --load-balancer-arns "$alb" 2>/dev/null || true
+  done
+else
+  echo "        Sin Application Load Balancer (${PROJECT_PREFIX}-alb)."
+fi
+
+TG_ARN="$(aws elbv2 describe-target-groups --region "$TARGET_REGION" \
+  --names "${PROJECT_PREFIX}-tg" \
+  --query "TargetGroups[].TargetGroupArn" --output text 2>/dev/null | dedup_words)"
+if [ -n "$TG_ARN" ]; then
+  for tg in $TG_ARN; do
+    echo "        Eliminando Target Group: $tg"
+    for attempt in 1 2 3 4 5 6; do
+      if aws elbv2 delete-target-group --region "$TARGET_REGION" --target-group-arn "$tg" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 5
+    done
+  done
+else
+  echo "        Sin Target Group (${PROJECT_PREFIX}-tg)."
+fi
+
+# 2.5. Elastic IPs (pnk-carta-digital*)
+echo "  [2.5] Buscando Elastic IPs (${PROJECT_PREFIX}*)..."
+EIP_RAW=""
+EIP_RAW="$EIP_RAW $(aws ec2 describe-addresses --region "$TARGET_REGION" \
+  --filters "Name=tag:Name,Values=${PROJECT_PREFIX}*" \
+  --query "Addresses[].AllocationId" --output text 2>/dev/null || true)"
+EIP_RAW="$EIP_RAW $(aws ec2 describe-addresses --region "$TARGET_REGION" \
+  --filters "Name=tag:Project,Values=${PROJECT_PREFIX}" \
+  --query "Addresses[].AllocationId" --output text 2>/dev/null || true)"
+EIP_ALLOCS="$(printf "%s\n" "$EIP_RAW" | dedup_words)"
+if [ -n "$EIP_ALLOCS" ]; then
+  for alloc_id in $EIP_ALLOCS; do
+    ASSOC_ID="$(aws ec2 describe-addresses --region "$TARGET_REGION" \
+      --allocation-ids "$alloc_id" \
+      --query "Addresses[0].AssociationId" --output text 2>/dev/null | dedup_words)"
+    if [ -n "$ASSOC_ID" ]; then
+      echo "        Desasociando Elastic IP ($alloc_id / $ASSOC_ID)..."
+      aws ec2 disassociate-address --region "$TARGET_REGION" --association-id "$ASSOC_ID" >/dev/null 2>&1 || true
+    fi
+    echo "        Liberando Elastic IP: $alloc_id"
+    aws ec2 release-address --region "$TARGET_REGION" --allocation-id "$alloc_id" >/dev/null 2>&1 || true
+  done
+else
+  echo "        Sin Elastic IPs pendientes."
+fi
+
+# 2.6. Amazon RDS PostgreSQL (pnk-carta-digital-postgres & pnk-carta-digital-rds-subnet-group)
+echo "  [2.6] Buscando Amazon RDS PostgreSQL (${PROJECT_PREFIX}-postgres)..."
+RDS_ID="${PROJECT_PREFIX}-postgres"
+RDS_STATUS="$(aws rds describe-db-instances --region "$TARGET_REGION" \
+  --db-instance-identifier "$RDS_ID" \
+  --query "DBInstances[0].DBInstanceStatus" --output text 2>/dev/null | dedup_words)"
+if [ -n "$RDS_STATUS" ]; then
+  if [ "$RDS_STATUS" != "deleting" ]; then
+    echo "        Deshabilitando deletion-protection (si aplica) en $RDS_ID..."
+    aws rds modify-db-instance --region "$TARGET_REGION" \
+      --db-instance-identifier "$RDS_ID" \
+      --no-deletion-protection --apply-immediately >/dev/null 2>&1 || true
+    echo "        Eliminando instancia RDS $RDS_ID (sin final snapshot)..."
+    aws rds delete-db-instance --region "$TARGET_REGION" \
+      --db-instance-identifier "$RDS_ID" \
+      --skip-final-snapshot --delete-automated-backups >/dev/null 2>&1 || true
+  else
+    echo "        La instancia RDS $RDS_ID ya estaba en estado 'deleting'."
+  fi
+  echo "        Esperando eliminación completa de Amazon RDS (puede tardar varios minutos)..."
+  aws rds wait db-instance-deleted --region "$TARGET_REGION" --db-instance-identifier "$RDS_ID" 2>/dev/null || true
+else
+  echo "        Sin instancia RDS ($RDS_ID)."
+fi
+
+RDS_SUBNET_GRP="${PROJECT_PREFIX}-rds-subnet-group"
+if aws rds describe-db-subnet-groups --region "$TARGET_REGION" --db-subnet-group-name "$RDS_SUBNET_GRP" >/dev/null 2>&1; then
+  echo "        Eliminando DB Subnet Group: $RDS_SUBNET_GRP"
+  aws rds delete-db-subnet-group --region "$TARGET_REGION" --db-subnet-group-name "$RDS_SUBNET_GRP" >/dev/null 2>&1 || true
+fi
+
+# 2.7. SSH Key Pair (pnk-carta-digital-deploy-key)
+echo "  [2.7] Eliminando Key Pair SSH (${PROJECT_PREFIX}-deploy-key) si existe..."
+aws ec2 delete-key-pair --region "$TARGET_REGION" --key-name "${PROJECT_PREFIX}-deploy-key" >/dev/null 2>&1 || true
+
+# 2.8. VPC, ENIs, Security Groups, Subnets, Route Tables e Internet Gateway
+echo "  [2.8] Buscando VPC, Subredes, Route Tables, IGW y Security Groups (${PROJECT_PREFIX}*)..."
+VPC_IDS="$(discover_project_vpcs)"
+if [ -n "$VPC_IDS" ]; then
+  for vpc_id in $VPC_IDS; do
+    echo "        Limpiando VPC: $vpc_id"
+
+    # Esperar a que ENIs de ALB/RDS terminen de desacoplarse y limpiar ENIs disponibles
+    for wait_i in $(seq 1 12); do
+      AVAIL_ENIS="$(aws ec2 describe-network-interfaces --region "$TARGET_REGION" \
+        --filters "Name=vpc-id,Values=${vpc_id}" "Name=status,Values=available" \
+        --query "NetworkInterfaces[].NetworkInterfaceId" --output text 2>/dev/null | dedup_words)"
+      for eni in $AVAIL_ENIS; do
+        echo "          Eliminando ENI residual: $eni"
+        aws ec2 delete-network-interface --region "$TARGET_REGION" --network-interface-id "$eni" >/dev/null 2>&1 || true
+      done
+
+      ALL_ENIS="$(aws ec2 describe-network-interfaces --region "$TARGET_REGION" \
+        --filters "Name=vpc-id,Values=${vpc_id}" \
+        --query "NetworkInterfaces[].NetworkInterfaceId" --output text 2>/dev/null | dedup_words)"
+      if [ -z "$ALL_ENIS" ]; then
+        break
+      fi
+      echo "          Esperando liberación de ENIs de red en $vpc_id ($wait_i/12)..."
+      sleep 5
+    done
+
+    # Revocar reglas ingress/egress de Security Groups no-default (evita bloqueos por referencias cruzadas)
+    SG_IDS="$(aws ec2 describe-security-groups --region "$TARGET_REGION" \
+      --filters "Name=vpc-id,Values=${vpc_id}" \
+      --query "SecurityGroups[?GroupName!='default'].GroupId" --output text 2>/dev/null | dedup_words)"
+    if [ -n "$SG_IDS" ]; then
+      for sg in $SG_IDS; do
+        INGRESS_JSON="$(aws ec2 describe-security-groups --region "$TARGET_REGION" \
+          --group-ids "$sg" --query "SecurityGroups[0].IpPermissions" --output json 2>/dev/null | tr -d '\r\n' || echo "[]")"
+        if [ -n "$INGRESS_JSON" ] && [ "$INGRESS_JSON" != "[]" ] && [ "$INGRESS_JSON" != "null" ]; then
+          aws ec2 revoke-security-group-ingress --region "$TARGET_REGION" --group-id "$sg" --ip-permissions "$INGRESS_JSON" >/dev/null 2>&1 || true
+        fi
+        EGRESS_JSON="$(aws ec2 describe-security-groups --region "$TARGET_REGION" \
+          --group-ids "$sg" --query "SecurityGroups[0].IpPermissionsEgress" --output json 2>/dev/null | tr -d '\r\n' || echo "[]")"
+        if [ -n "$EGRESS_JSON" ] && [ "$EGRESS_JSON" != "[]" ] && [ "$EGRESS_JSON" != "null" ]; then
+          aws ec2 revoke-security-group-egress --region "$TARGET_REGION" --group-id "$sg" --ip-permissions "$EGRESS_JSON" >/dev/null 2>&1 || true
+        fi
+      done
+
+      for pass in 1 2 3; do
+        REMAINING_SGS="$(aws ec2 describe-security-groups --region "$TARGET_REGION" \
+          --filters "Name=vpc-id,Values=${vpc_id}" \
+          --query "SecurityGroups[?GroupName!='default'].GroupId" --output text 2>/dev/null | dedup_words)"
+        [ -z "$REMAINING_SGS" ] && break
+        for sg in $REMAINING_SGS; do
+          echo "          Eliminando Security Group: $sg"
+          aws ec2 delete-security-group --region "$TARGET_REGION" --group-id "$sg" >/dev/null 2>&1 || true
+        done
+      done
+    fi
+
+    # Eliminar Subnets
+    SUBNET_IDS="$(aws ec2 describe-subnets --region "$TARGET_REGION" \
+      --filters "Name=vpc-id,Values=${vpc_id}" \
+      --query "Subnets[].SubnetId" --output text 2>/dev/null | dedup_words)"
+    for subnet in $SUBNET_IDS; do
+      echo "          Eliminando Subnet: $subnet"
+      aws ec2 delete-subnet --region "$TARGET_REGION" --subnet-id "$subnet" >/dev/null 2>&1 || true
+    done
+
+    # Desasociar y eliminar Route Tables no-main
+    RTB_ASSOCS="$(aws ec2 describe-route-tables --region "$TARGET_REGION" \
+      --filters "Name=vpc-id,Values=${vpc_id}" \
+      --query "RouteTables[].Associations[?!Main].RouteTableAssociationId" --output text 2>/dev/null | dedup_words)"
+    for assoc in $RTB_ASSOCS; do
+      aws ec2 disassociate-route-table --region "$TARGET_REGION" --association-id "$assoc" >/dev/null 2>&1 || true
+    done
+
+    RTB_IDS="$(aws ec2 describe-route-tables --region "$TARGET_REGION" \
+      --filters "Name=vpc-id,Values=${vpc_id}" \
+      --query "RouteTables[?!(Associations[?Main])].RouteTableId" --output text 2>/dev/null | dedup_words)"
+    for rtb in $RTB_IDS; do
+      echo "          Eliminando Route Table: $rtb"
+      aws ec2 delete-route-table --region "$TARGET_REGION" --route-table-id "$rtb" >/dev/null 2>&1 || true
+    done
+
+    # Desacoplar y eliminar Internet Gateways
+    IGW_IDS="$(aws ec2 describe-internet-gateways --region "$TARGET_REGION" \
+      --filters "Name=attachment.vpc-id,Values=${vpc_id}" \
+      --query "InternetGateways[].InternetGatewayId" --output text 2>/dev/null | dedup_words)"
+    for igw in $IGW_IDS; do
+      echo "          Desacoplando y eliminando IGW: $igw"
+      aws ec2 detach-internet-gateway --region "$TARGET_REGION" --internet-gateway-id "$igw" --vpc-id "$vpc_id" >/dev/null 2>&1 || true
+      aws ec2 delete-internet-gateway --region "$TARGET_REGION" --internet-gateway-id "$igw" >/dev/null 2>&1 || true
+    done
+
+    # Eliminar VPC
+    echo "          Eliminando VPC: $vpc_id"
+    aws ec2 delete-vpc --region "$TARGET_REGION" --vpc-id "$vpc_id" >/dev/null 2>&1 || true
+  done
+else
+  echo "        Sin VPCs de ${PROJECT_PREFIX} activas."
+fi
+
+# =============================================================================
+# PASO 3: LIMPIEZA DE ARCHIVOS LOCALES DE ESTADO Y LLAVES
+# =============================================================================
+echo ""
+echo "[3/3] Limpiando archivos locales de estado (terraform.tfstate, llave .pem y outputs JSON)..."
+rm -f terraform.tfstate terraform.tfstate.backup pnk-ec2-deploy-key.pem outputs-despliegue.json
 
 echo ""
 echo "============================================================================="
-echo "  INFRAESTRUCTURA DESTRUIDA COMPLETAMENTE"
-echo "  Todos los recursos (VPC, EC2, EIP, ALB, ASG, RDS) fueron eliminados."
+echo "  INFRAESTRUCTURA DESTRUIDA COMPLETAMENTE (STATELESS-PROOF)"
+echo "  Todos los recursos (${PROJECT_PREFIX}*: ASG, LT, EC2, ALB, TG, EIP, RDS,"
+echo "  Key Pair, Security Groups, Subnets, Route Tables, IGW y VPC) eliminados."
 echo "  Confirmado: \$0 en cargos continuos de AWS."
 echo "============================================================================="

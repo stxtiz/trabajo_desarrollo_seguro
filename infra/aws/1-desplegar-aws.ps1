@@ -1,9 +1,40 @@
 ﻿# =============================================================================
 # SCRIPT 1: DESPLIEGUE COMPLETO DESDE CERO EN AWS (TERRAFORM + AWS CLI)
 # Proyecto: Carta Digital PNK Security (OWASP ASVS v5.0 Nivel 3)
+# Uso: .\1-desplegar-aws.ps1          (pide confirmacion si hay recursos huerfanos)
+#      .\1-desplegar-aws.ps1 -Force   (limpia huerfanos sin terraform.tfstate automaticamente)
 # =============================================================================
+param(
+    [switch]$Force
+)
+
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
+
+$ProjectPrefix = "pnk-carta-digital"
+$TargetRegion = if (-not [string]::IsNullOrWhiteSpace($env:AWS_REGION)) {
+    $env:AWS_REGION
+} elseif (-not [string]::IsNullOrWhiteSpace($env:AWS_DEFAULT_REGION)) {
+    $env:AWS_DEFAULT_REGION
+} else {
+    "us-east-1"
+}
+
+function Invoke-AwsCheck {
+    param([string[]]$AwsArgs)
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $out = & aws @AwsArgs 2>$null
+        $code = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
+    if ($code -ne 0) { return "" }
+    $txt = ($out | Out-String).Trim()
+    if ($txt -eq "None" -or $txt -eq "null") { return "" }
+    return $txt
+}
 
 Write-Host "=============================================================================" -ForegroundColor Cyan
 Write-Host "  PNK Security - Script 1: Despliegue Completo de Infraestructura AWS" -ForegroundColor Cyan
@@ -48,6 +79,48 @@ if ($LASTEXITCODE -ne 0) {
 }
 $identity = $identityJson | ConvertFrom-Json
 Write-Host "  Cuenta AWS verificada: $($identity.Account) ($($identity.Arn))" -ForegroundColor Green
+
+# 2b. Verificar si existen recursos huerfanos en AWS sin terraform.tfstate local
+$hasLocalState = (Test-Path "terraform.tfstate") -and ((Get-Item "terraform.tfstate").Length -gt 0) -and (Select-String -Path "terraform.tfstate" -Pattern '"type":' -Quiet)
+if (-not $hasLocalState) {
+    $orphans = @()
+    $existingVpc = Invoke-AwsCheck -AwsArgs @("ec2", "describe-vpcs", "--region", $TargetRegion, "--filters", "Name=tag:Name,Values=$ProjectPrefix-vpc", "--query", "Vpcs[0].VpcId", "--output", "text")
+    if ($existingVpc) { $orphans += "VPC($existingVpc)" }
+
+    $existingKey = Invoke-AwsCheck -AwsArgs @("ec2", "describe-key-pairs", "--region", $TargetRegion, "--key-names", "$ProjectPrefix-deploy-key", "--query", "KeyPairs[0].KeyName", "--output", "text")
+    if ($existingKey) { $orphans += "KeyPair($existingKey)" }
+
+    $existingRds = Invoke-AwsCheck -AwsArgs @("rds", "describe-db-instances", "--region", $TargetRegion, "--db-instance-identifier", "$ProjectPrefix-postgres", "--query", "DBInstances[0].DBInstanceIdentifier", "--output", "text")
+    if ($existingRds) { $orphans += "RDS($existingRds)" }
+
+    $existingAlb = Invoke-AwsCheck -AwsArgs @("elbv2", "describe-load-balancers", "--region", $TargetRegion, "--names", "$ProjectPrefix-alb", "--query", "LoadBalancers[0].LoadBalancerName", "--output", "text")
+    if ($existingAlb) { $orphans += "ALB($existingAlb)" }
+
+    $existingAsg = Invoke-AwsCheck -AwsArgs @("autoscaling", "describe-auto-scaling-groups", "--region", $TargetRegion, "--auto-scaling-group-names", "$ProjectPrefix-asg", "--query", "AutoScalingGroups[0].AutoScalingGroupName", "--output", "text")
+    if ($existingAsg) { $orphans += "ASG($existingAsg)" }
+
+    if ($orphans.Count -gt 0) {
+        Write-Host ""
+        Write-Host "[AVISO] No hay 'terraform.tfstate' local, pero ya existen recursos previos en AWS ($TargetRegion):" -ForegroundColor Yellow
+        Write-Host "        $($orphans -join ', ')" -ForegroundColor Yellow
+        Write-Host "        (Esto ocurre si se perdio la sesion anterior o se clono el repo en otra carpeta.)"
+        Write-Host "        Terraform fallara con errores de recursos duplicados si no se limpian primero."
+        if ($Force) {
+            Write-Host "  Limpiando automaticamente recursos huerfanos con .\2-destruir-aws.ps1 -Force..." -ForegroundColor Cyan
+            & (Join-Path $PSScriptRoot "2-destruir-aws.ps1") -Force
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        } else {
+            $cleanConfirm = Read-Host "¿Deseas ejecutar '.\2-destruir-aws.ps1 -Force' ahora para limpiar los recursos previos y continuar? [s/N]"
+            if ($cleanConfirm -in @("s", "S", "si", "SI", "y", "Y", "yes", "YES")) {
+                & (Join-Path $PSScriptRoot "2-destruir-aws.ps1") -Force
+                if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            } else {
+                Write-Host "Despliegue cancelado. Ejecuta '.\2-destruir-aws.ps1' manualmente antes de volver a desplegar."
+                exit 1
+            }
+        }
+    }
+}
 
 # 3. Inicializar y validar Terraform
 Write-Host ""
