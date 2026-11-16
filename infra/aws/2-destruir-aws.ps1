@@ -31,12 +31,16 @@ function Invoke-AwsSafe {
         [string[]]$AwsArgs
     )
     $prevEap = $ErrorActionPreference
+    $hasNativePref = Test-Path variable:PSNativeCommandUseErrorActionPreference
+    $prevNativePref = if ($hasNativePref) { $PSNativeCommandUseErrorActionPreference } else { $false }
     $ErrorActionPreference = "Continue"
+    if ($hasNativePref) { $PSNativeCommandUseErrorActionPreference = $false }
     try {
         $out = & aws @AwsArgs 2>$null
         $code = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $prevEap
+        if ($hasNativePref) { $PSNativeCommandUseErrorActionPreference = $prevNativePref }
     }
     return [pscustomobject]@{
         ExitCode = $code
@@ -123,7 +127,10 @@ if ($hasState) {
     if (Get-Command terraform -ErrorAction SilentlyContinue) {
         Write-Host "  terraform.tfstate encontrado. Ejecutando 'terraform destroy -auto-approve'..."
         $prevEap = $ErrorActionPreference
+        $hasNativePref = Test-Path variable:PSNativeCommandUseErrorActionPreference
+        $prevNativePref = if ($hasNativePref) { $PSNativeCommandUseErrorActionPreference } else { $false }
         $ErrorActionPreference = "Continue"
+        if ($hasNativePref) { $PSNativeCommandUseErrorActionPreference = $false }
         try {
             if (-not (Test-Path ".terraform")) {
                 & terraform init
@@ -131,6 +138,7 @@ if ($hasState) {
             & terraform destroy -auto-approve
         } finally {
             $ErrorActionPreference = $prevEap
+            if ($hasNativePref) { $PSNativeCommandUseErrorActionPreference = $prevNativePref }
         }
     } else {
         Write-Host "  [AVISO] terraform.tfstate existe pero Terraform no esta instalado; se continuara con el barrido directo por AWS CLI." -ForegroundColor Yellow
