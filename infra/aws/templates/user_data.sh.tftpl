@@ -12,7 +12,7 @@ echo "=== [PNK Security] Inicio de bootstrap $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
 
 # 1. Configurar Swap de 2 GB (crítico para instancias Free Tier de 1 GB RAM)
 if [ ! -f /swapfile ]; then
-  echo "[1/6] Creando archivo /swapfile de 2 GB..."
+  echo "[1/7] Creando archivo /swapfile de 2 GB..."
   fallocate -l 2G /swapfile
   chmod 600 /swapfile
   mkswap /swapfile
@@ -20,8 +20,8 @@ if [ ! -f /swapfile ]; then
   grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
 fi
 
-# 2. Instalar dependencias base, PostgreSQL client y Docker Engine + Compose v2
-echo "[2/6] Actualizando paquetes e instalando Docker Engine y herramientas..."
+# 2. Instalar dependencias base, AWS CLI, PostgreSQL client y Docker Engine + Compose v2
+echo "[2/7] Actualizando paquetes e instalando AWS CLI, Docker Engine y herramientas..."
 apt-get -o DPkg::Lock::Timeout=120 update -y
 apt-get -o DPkg::Lock::Timeout=120 install -y \
   ca-certificates \
@@ -29,7 +29,24 @@ apt-get -o DPkg::Lock::Timeout=120 install -y \
   git \
   gnupg \
   openssl \
-  postgresql-client
+  postgresql-client \
+  unzip
+
+if ! command -v aws >/dev/null 2>&1; then
+  if ! apt-get -o DPkg::Lock::Timeout=120 install -y awscli >/dev/null 2>&1; then
+    echo "Instalando AWS CLI v2 oficial..."
+    ARCH="$(uname -m)"
+    if [ "$ARCH" = "aarch64" ]; then
+      AWSCLI_URL="https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip"
+    else
+      AWSCLI_URL="https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"
+    fi
+    curl -fsSL "$AWSCLI_URL" -o /tmp/awscliv2.zip
+    unzip -q -o /tmp/awscliv2.zip -d /tmp
+    /tmp/aws/install --update
+    rm -rf /tmp/aws /tmp/awscliv2.zip
+  fi
+fi
 
 if ! command -v docker >/dev/null 2>&1; then
   install -m 0755 -d /etc/apt/keyrings
@@ -50,7 +67,7 @@ systemctl start docker
 usermod -aG docker ubuntu || true
 
 # 3. Clonar rama produccion, descargar certificado SSL RDS y generar .env seguro
-echo "[3/6] Clonando rama ${git_branch} en /opt/carta-digital y configurando .env..."
+echo "[3/7] Clonando rama ${git_branch} en /opt/carta-digital y configurando .env..."
 APP_DIR="/opt/carta-digital"
 if [ ! -d "$APP_DIR/.git" ]; then
   rm -rf "$APP_DIR"
@@ -84,7 +101,7 @@ chmod 600 "$APP_DIR/.env"
 chown -R ubuntu:ubuntu "$APP_DIR"
 
 # 4. Esperar disponibilidad de Amazon RDS PostgreSQL
-echo "[4/6] Esperando disponibilidad de Amazon RDS en ${rds_address}:5432..."
+echo "[4/7] Esperando disponibilidad de Amazon RDS en ${rds_address}:5432..."
 RDS_READY=0
 for i in $(seq 1 60); do
   if pg_isready -h "${rds_address}" -p 5432 -U "${db_username}" -d "${db_name}" >/dev/null 2>&1; then
@@ -101,7 +118,7 @@ if [ "$RDS_READY" -ne 1 ]; then
 fi
 
 # 5. Inicializar esquema SQL solo si public.usuarios NO existe (con advisory lock contra carreras ASG)
-echo "[5/6] Verificando esquema SQL en Amazon RDS..."
+echo "[5/7] Verificando esquema SQL en Amazon RDS..."
 export PGPASSWORD='${db_password}'
 export PGSSLMODE="verify-full"
 export PGSSLROOTCERT="$APP_DIR/certs/rds-global-bundle.pem"
@@ -134,8 +151,53 @@ if [ "$SQL_INIT_OK" -ne 1 ]; then
 fi
 
 # 6. Construir e iniciar contenedores en modo producción con Amazon RDS
-echo "[6/6] Levantando contenedores con docker-compose.rds.yml..."
+echo "[6/7] Levantando contenedores con docker-compose.rds.yml..."
 cd "$APP_DIR"
 docker compose -f docker-compose.rds.yml up -d --build
+
+# 7. Auto-asociar Elastic IP si no está asociada o su instancia previa dejó de estar 'running'
+echo "[7/7] Verificando asociación de Elastic IP (${eip_allocation_id})..."
+if command -v aws >/dev/null 2>&1; then
+  TOKEN="$(curl -sS -m 5 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" || true)"
+  INSTANCE_ID=""
+  if [ -n "$TOKEN" ]; then
+    INSTANCE_ID="$(curl -sS -m 5 -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id || true)"
+  fi
+
+  if [ -n "$INSTANCE_ID" ] && aws sts get-caller-identity --region "${aws_region}" >/dev/null 2>&1; then
+    EIP_ASSOC_INSTANCE="$(aws ec2 describe-addresses \
+      --region "${aws_region}" \
+      --allocation-ids "${eip_allocation_id}" \
+      --query 'Addresses[0].InstanceId' \
+      --output text 2>/dev/null || echo "None")"
+
+    NEEDS_EIP_ASSOC=0
+    if [ -z "$EIP_ASSOC_INSTANCE" ] || [ "$EIP_ASSOC_INSTANCE" = "None" ] || [ "$EIP_ASSOC_INSTANCE" = "null" ]; then
+      NEEDS_EIP_ASSOC=1
+    elif [ "$EIP_ASSOC_INSTANCE" != "$INSTANCE_ID" ]; then
+      HOLDER_STATE="$(aws ec2 describe-instances \
+        --region "${aws_region}" \
+        --instance-ids "$EIP_ASSOC_INSTANCE" \
+        --query 'Reservations[0].Instances[0].State.Name' \
+        --output text 2>/dev/null || echo "terminated")"
+      if [ "$HOLDER_STATE" != "running" ]; then
+        NEEDS_EIP_ASSOC=1
+      fi
+    fi
+
+    if [ "$NEEDS_EIP_ASSOC" -eq 1 ]; then
+      echo "Asociando Elastic IP ${eip_allocation_id} a la instancia $INSTANCE_ID..."
+      aws ec2 associate-address \
+        --region "${aws_region}" \
+        --instance-id "$INSTANCE_ID" \
+        --allocation-id "${eip_allocation_id}" \
+        --allow-reassociation || echo "Aviso: No se pudo asociar la Elastic IP desde user_data."
+    else
+      echo "Elastic IP ya asociada a una instancia activa ($EIP_ASSOC_INSTANCE)."
+    fi
+  else
+    echo "Aviso: Sin Instance Profile IAM o IMDSv2 disponible; se omite auto-asociación desde user_data."
+  fi
+fi
 
 echo "=== [PNK Security] Bootstrap finalizado exitosamente $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="

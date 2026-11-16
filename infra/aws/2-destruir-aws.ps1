@@ -49,7 +49,7 @@ if (-not $Force) {
     Write-Host ""
     Write-Host "ATENCION: Esta accion eliminara permanentemente TODOS los recursos creados:" -ForegroundColor Red
     Write-Host "  - VPC, Subredes, IGW y Security Groups"
-    Write-Host "  - Instancia EC2 Primaria, Elastic IP, ALB y Auto Scaling Group"
+    Write-Host "  - Instancias EC2 del Auto Scaling Group, Elastic IP y Application Load Balancer"
     Write-Host "  - Base de datos Amazon RDS PostgreSQL (y sus datos)"
     Write-Host "  - Par de llaves SSH en AWS"
     Write-Host ""

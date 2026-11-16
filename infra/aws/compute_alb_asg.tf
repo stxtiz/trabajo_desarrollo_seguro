@@ -19,50 +19,6 @@ data "aws_ami" "ubuntu_2404" {
   }
 }
 
-locals {
-  rendered_user_data = templatefile("${path.module}/templates/user_data.sh.tftpl", {
-    git_repo_url    = var.git_repo_url
-    git_branch      = var.git_branch
-    rds_address     = aws_db_instance.postgres.address
-    db_name         = var.db_name
-    db_username     = var.db_username
-    db_password     = random_password.db_password.result
-    password_pepper = random_password.password_pepper.result
-    cors_origin     = var.cors_origin
-  })
-}
-
-# --- Instancia EC2 Primaria (con Elastic IP fija para SSH / CI-CD / sslip.io) ---
-resource "aws_instance" "primary" {
-  ami                         = data.aws_ami.ubuntu_2404.id
-  instance_type               = var.instance_type
-  subnet_id                   = aws_subnet.public[0].id
-  vpc_security_group_ids      = [aws_security_group.ec2_sg.id]
-  key_name                    = aws_key_pair.deploy_key.key_name
-  iam_instance_profile        = var.iam_instance_profile != "" ? var.iam_instance_profile : null
-  associate_public_ip_address = true
-  user_data                   = local.rendered_user_data
-  user_data_replace_on_change = true
-
-  metadata_options {
-    http_endpoint = "enabled"
-    http_tokens   = "required" # IMDSv2 obligatorio (ASVS v5.0)
-  }
-
-  root_block_device {
-    volume_size = var.root_volume_size
-    volume_type = "gp3"
-    encrypted   = true
-  }
-
-  tags = {
-    Name = "${var.project_name}-primary-ec2"
-    Role = "primary"
-  }
-
-  depends_on = [aws_db_instance.postgres]
-}
-
 resource "aws_eip" "primary" {
   domain = "vpc"
 
@@ -71,9 +27,19 @@ resource "aws_eip" "primary" {
   }
 }
 
-resource "aws_eip_association" "primary" {
-  instance_id   = aws_instance.primary.id
-  allocation_id = aws_eip.primary.id
+locals {
+  rendered_user_data = templatefile("${path.module}/templates/user_data.sh.tftpl", {
+    git_repo_url      = var.git_repo_url
+    git_branch        = var.git_branch
+    rds_address       = aws_db_instance.postgres.address
+    db_name           = var.db_name
+    db_username       = var.db_username
+    db_password       = random_password.db_password.result
+    password_pepper   = random_password.password_pepper.result
+    cors_origin       = var.cors_origin
+    eip_allocation_id = aws_eip.primary.id
+    aws_region        = var.aws_region
+  })
 }
 
 # --- Application Load Balancer (ALB), Target Group (/health) y Listener HTTP 80 ---
@@ -124,19 +90,14 @@ resource "aws_lb_listener" "http" {
   }
 }
 
-resource "aws_lb_target_group_attachment" "primary" {
-  target_group_arn = aws_lb_target_group.frontend.arn
-  target_id        = aws_instance.primary.id
-  port             = 80
-}
-
-# --- Launch Template + Auto Scaling Group (ASG) + Política CPU Target Tracking ---
+# --- Launch Template + Auto Scaling Group (100% de las instancias EC2 auto-recuperables) ---
 resource "aws_launch_template" "app" {
-  name_prefix   = "${var.project_name}-lt-"
-  image_id      = data.aws_ami.ubuntu_2404.id
-  instance_type = var.instance_type
-  key_name      = aws_key_pair.deploy_key.key_name
-  user_data     = base64encode(local.rendered_user_data)
+  name_prefix            = "${var.project_name}-lt-"
+  image_id               = data.aws_ami.ubuntu_2404.id
+  instance_type          = var.instance_type
+  key_name               = aws_key_pair.deploy_key.key_name
+  user_data              = base64encode(local.rendered_user_data)
+  update_default_version = true
 
   dynamic "iam_instance_profile" {
     for_each = var.iam_instance_profile != "" ? [var.iam_instance_profile] : []
@@ -165,17 +126,6 @@ resource "aws_launch_template" "app" {
       delete_on_termination = true
     }
   }
-
-  tag_specifications {
-    resource_type = "instance"
-    tags = {
-      Name        = "${var.project_name}-asg-ec2"
-      Project     = var.project_name
-      Environment = var.environment
-      ManagedBy   = "Terraform"
-      Role        = "autoscaling"
-    }
-  }
 }
 
 resource "aws_autoscaling_group" "app" {
@@ -183,10 +133,12 @@ resource "aws_autoscaling_group" "app" {
   vpc_zone_identifier       = aws_subnet.public[*].id
   target_group_arns         = [aws_lb_target_group.frontend.arn]
   health_check_type         = "ELB"
-  health_check_grace_period = 420
+  health_check_grace_period = 300
   min_size                  = var.asg_min_size
   desired_capacity          = var.asg_desired_capacity
   max_size                  = var.asg_max_size
+  wait_for_capacity_timeout = "10m"
+  force_delete              = true
 
   launch_template {
     id      = aws_launch_template.app.id
@@ -195,13 +147,37 @@ resource "aws_autoscaling_group" "app" {
 
   tag {
     key                 = "Name"
-    value               = "${var.project_name}-asg-node"
+    value               = "${var.project_name}-ec2"
+    propagate_at_launch = true
+  }
+
+  tag {
+    key                 = "Project"
+    value               = var.project_name
+    propagate_at_launch = true
+  }
+
+  tag {
+    key                 = "Environment"
+    value               = var.environment
+    propagate_at_launch = true
+  }
+
+  tag {
+    key                 = "ManagedBy"
+    value               = "Terraform"
+    propagate_at_launch = true
+  }
+
+  tag {
+    key                 = "Role"
+    value               = "autoscaling"
     propagate_at_launch = true
   }
 
   depends_on = [
-    aws_instance.primary,
-    aws_db_instance.postgres
+    aws_db_instance.postgres,
+    aws_lb_listener.http
   ]
 }
 

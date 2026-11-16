@@ -15,7 +15,8 @@
 2. [Prerrequisitos desde Cero (AWS Academy LabRole y Herramientas)](#2-prerrequisitos-desde-cero-aws-academy-labrole-y-herramientas)
 3. [Paso 1: Desplegar toda la Infraestructura AWS con Script 1](#3-paso-1-desplegar-toda-la-infraestructura-aws-con-script-1)
 4. [Paso 2: Configurar Cloudflare Worker Manualmente desde Cero (HTTPS Gratis, Sin Dominio)](#4-paso-2-configurar-cloudflare-worker-manualmente-desde-cero-https-gratis-sin-dominio)
-5. [Paso 3: Probar la Aplicación Desplegada (`/carta`, `/carrito`, `/admin` y los 6 CRUDs)](#5-paso-3-probar-la-aplicación-desplegada-carta-carrito-admin-y-los-6-cruds)
+5. [Paso 3: Probar la Aplicación, los 6 CRUDs y la Alta Disponibilidad (Auto Scaling)](#5-paso-3-probar-la-aplicación-desplegada-carta-carrito-admin-y-los-6-cruds)
+   - [5.4. Cómo probar la Alta Disponibilidad y Auto-Recuperación (Terminar una instancia EC2)](#54-cómo-probar-la-alta-disponibilidad-y-auto-recuperación-terminar-una-instancia-ec2)
 6. [Opcional: Configurar Secretos de GitHub Actions para CI/CD Automático](#6-opcional-configurar-secretos-de-github-actions-para-cicd-automático)
 7. [Paso 4: Destruir toda la Infraestructura AWS con Script 2 (Cero Cobros)](#7-paso-4-destruir-toda-la-infraestructura-aws-con-script-2-cero-cobros)
 8. [Solución de Problemas Frecuentes (Troubleshooting)](#8-solución-de-problemas-frecuentes-troubleshooting)
@@ -30,27 +31,28 @@ La aplicación separa físicamente el **Front-End** (SPA en React 19 + Vite, ser
 
 ```mermaid
 flowchart TB
-    User["Usuario Final (Navegador Web)"] -->|"HTTPS TLS 1.3"| CF["Cloudflare Worker Gratuito (*.workers.dev)<br/>WAF Borde + Cabeceras ASVS 5.0<br/>Variable: EC2_ORIGIN_URL"]
+    User["Usuario Final (Navegador Web)"] -->|"HTTPS TLS 1.3"| CF["Cloudflare Worker Gratuito (*.workers.dev)<br/>WAF Borde + Cabeceras ASVS 5.0<br/>EC2_ORIGIN_URL = http://ALB_DNS"]
 
     subgraph AWS["AWS Cloud - VPC 10.20.0.0/16 (pnk-carta-digital-vpc)"]
         IGW["Internet Gateway (IGW)"]
-        CF -->|"HTTP Puerto 80"| IGW
+        CF -->|"HTTP Puerto 80 (DNS fijo del ALB)"| IGW
 
-        subgraph PublicSubnets["Subredes Públicas (10.20.1.0/24 y 10.20.2.0/24)"]
+        subgraph PublicSubnets["Subredes Públicas en 2 AZs (10.20.1.0/24 y 10.20.2.0/24)"]
             ALB["Application Load Balancer (pnk-carta-digital-alb)<br/>SG: alb_sg (HTTP :80) -> Healthcheck /health"]
             IGW --> ALB
-            IGW -->|"Opción directa *.sslip.io o SSH :22"| EC2P
+            IGW -.->|"SSH :22 o alternativa *.sslip.io (Elastic IP flotante)"| EC2A
 
-            subgraph EC2P["EC2 Primaria Ubuntu 24.04 (t3.micro + Elastic IP)"]
-                FE1["Contenedor frontend-prod<br/>React 19 + Vite + Express (:80 -> :8080)"] -->|"/api interno (edge_net)"| BE1["Contenedor backend-prod<br/>Node.js MVC (:3000 no expuesto)"]
+            subgraph ASG["Auto Scaling Group: pnk-carta-digital-asg (2 activas por defecto, máx. 3, CPU 70%)"]
+                subgraph EC2A["Instancia EC2 #1 (AZ-a, Ubuntu 24.04 t3.micro)"]
+                    FE1["frontend-prod (:80 -> :8080)"] -->|"/api interno"| BE1["backend-prod (:3000)"]
+                end
+                subgraph EC2B["Instancia EC2 #2 (AZ-b, Ubuntu 24.04 t3.micro)"]
+                    FE2["frontend-prod (:80 -> :8080)"] -->|"/api interno"| BE2["backend-prod (:3000)"]
+                end
             end
 
-            subgraph ASG["Auto Scaling Group (1 a 3 nodos, CPU 70%)"]
-                FE2["Contenedor frontend-prod (:80 -> :8080)"] -->|"/api interno (edge_net)"| BE2["Contenedor backend-prod (:3000)"]
-            end
-
-            ALB -->|"HTTP :80"| EC2P
-            ALB -->|"HTTP :80"| ASG
+            ALB -->|"HTTP :80 (Cero Downtime)"| EC2A
+            ALB -->|"HTTP :80 (Cero Downtime)"| EC2B
         end
 
         subgraph PrivateSubnets["Subredes Privadas Aisladas (10.20.11.0/24 y 10.20.12.0/24)"]
@@ -69,6 +71,7 @@ flowchart TB
   - El puerto `3000` (Backend) **jamás** se abre en ningún Security Group.
   - El puerto `5432` (RDS PostgreSQL) **jamás** se expone a Internet (`publicly_accessible = false`) y `rds_sg` solo acepta conexiones provenientes de `ec2_sg`.
   - Las instancias EC2 exigen **IMDSv2** (`http_tokens = "required"`).
+- **Alta Disponibilidad y Auto-Recuperación:** Todas las instancias EC2 pertenecen al **Auto Scaling Group (`pnk-carta-digital-asg`)** con **2 instancias activas en 2 Zonas de Disponibilidad** detrás del **Application Load Balancer (`pnk-carta-digital-alb`)**. Si una instancia falla o es terminada, el ALB enruta el 100% del tráfico a la instancia sana con **cero downtime** mientras Auto Scaling levanta automáticamente el reemplazo y re-asocia la Elastic IP.
 - **Autenticación y sesiones en servidor:** Contraseñas con PBKDF2-HMAC-SHA512 / Argon2id + `PASSWORD_PEPPER` de 256+ bits generado aleatoriamente, protección CSRF (*Synchronizer Token Pattern*) y RBAC estricto para los 6 CRUDs en `/admin`.
 
 ---
@@ -82,7 +85,7 @@ Para ejecutar la automatización necesitas:
 > [!IMPORTANT]
 > **Si usas AWS Academy Learner Lab (`LabRole` / `LabStudent`):**
 > - **NO entres a IAM ni intentes crear usuarios (`IAM -> Users -> Create user`).** En Learner Lab la acción `iam:CreateUser` está prohibida y siempre arrojará **`AccessDenied`**.
-> - Tampoco necesitas crear roles IAM: la infraestructura en `infra/aws/` **crea cero recursos `aws_iam_*`** (solo incluye la variable opcional `iam_instance_profile = ""`, que puedes fijar en `"LabInstanceProfile"` únicamente si algún caso futuro lo exigiera).
+> - Tampoco necesitas crear roles IAM: la infraestructura en `infra/aws/` **crea cero recursos `aws_iam_*`**. Por defecto utiliza el Instance Profile preexistente `LabInstanceProfile` de AWS Academy para que las instancias del Auto Scaling Group puedan auto-re-asociar la Elastic IP; y si ejecutas Script 1 en una cuenta personal donde `LabInstanceProfile` no existe, el script detecta automáticamente tu cuenta y pasa `-var="iam_instance_profile="`.
 > - La región obligatoria en AWS Academy Learner Lab es **`us-east-1` (N. Virginia)**.
 
 ---
@@ -267,11 +270,11 @@ Elige el script según tu terminal:
 
 ### 3.3. ¿Qué crea Script 1 automáticamente?
 
-Script 1 ejecuta `terraform init`, `terraform validate` y `terraform apply -auto-approve`. Tardará entre **6 y 10 minutos** (principalmente mientras Amazon RDS aprovisiona el motor PostgreSQL 16) y creará de forma automática:
+Script 1 ejecuta `terraform init`, `terraform validate`, `terraform apply -auto-approve` y asocia inmediatamente la **Elastic IP** a la primera instancia activa del Auto Scaling Group. Tardará entre **6 y 10 minutos** (principalmente mientras Amazon RDS aprovisiona el motor PostgreSQL 16) y creará de forma automática:
 
 1. **Red aislada (`vpc.tf`):**
    - VPC `pnk-carta-digital-vpc` (`10.20.0.0/16`) e Internet Gateway (`pnk-carta-digital-igw`).
-   - 2 Subredes Públicas (`10.20.1.0/24`, `10.20.2.0/24`) con ruta a Internet.
+   - 2 Subredes Públicas (`10.20.1.0/24`, `10.20.2.0/24`) en **2 Zonas de Disponibilidad** con ruta a Internet.
    - 2 Subredes Privadas Aisladas (`10.20.11.0/24`, `10.20.12.0/24`) sin ruta a Internet.
 2. **Firewalls OWASP ASVS v5.0 Nivel 3 (`security.tf`):**
    - `alb_sg`: recibe HTTP `:80` y solo reenvía hacia `ec2_sg`.
@@ -279,14 +282,14 @@ Script 1 ejecuta `terraform init`, `terraform validate` y `terraform apply -auto
    - `rds_sg`: acepta TCP `:5432` **exclusivamente** desde `ec2_sg`.
 3. **Llaves y Secretos Criptográficos (`main.tf`):**
    - Par de llaves SSH **ED25519** guardado localmente en `infra/aws/pnk-ec2-deploy-key.pem` (con permisos `0600`).
-   - Contraseña aleatoria de 32 caracteres para RDS (`db_password`) y `password_pepper` de 48 caracteres compartidos entre RDS, EC2 primaria y Auto Scaling Group.
+   - Contraseña aleatoria de 32 caracteres para RDS (`db_password`) y `password_pepper` de 48 caracteres compartidos por todos los nodos del Auto Scaling Group.
 4. **Base de datos Amazon RDS PostgreSQL 16 (`rds.tf`):**
    - Instancia `db.t3.micro` con 20 GiB `gp3`, cifrado en reposo (`storage_encrypted = true`), `publicly_accessible = false`, BD `pnk_security` y usuario `pnk_prod_user`.
-5. **Cómputo, Balanceo y Escalado (`compute_alb_asg.tf` + `templates/user_data.sh.tftpl`):**
-   - **EC2 Primaria Ubuntu 24.04 LTS (`t3.micro`)** + **Elastic IP** fija + **IMDSv2 obligatorio**.
-   - **Application Load Balancer (`pnk-carta-digital-alb`)** + Target Group con healthcheck `/health` (`HTTP 200`).
-   - **Auto Scaling Group (`pnk-carta-digital-asg`)** (`min=1`, `desired=1`, `max=3`, política de escalado al 70% de CPU).
-   - **Bootstrap automático (`user_data`):** crea 2 GB de Swap, instala Docker Engine + Compose v2 + `postgresql-client`, clona la rama `produccion` en `/opt/carta-digital`, descarga el certificado SSL oficial de Amazon RDS (`certs/rds-global-bundle.pem`), genera `.env` (`0600`), espera a RDS con `pg_isready`, inicializa `database/init.sql` **solo si la tabla `public.usuarios` no existe** (protegido con `pg_advisory_lock` para no borrar datos al escalar o reiniciar) y ejecuta `docker compose -f docker-compose.rds.yml up -d --build`.
+5. **Cómputo 100% Auto-Recuperable, Balanceo y Escalado (`compute_alb_asg.tf` + `templates/user_data.sh.tftpl`):**
+   - **Application Load Balancer (`pnk-carta-digital-alb`)** + Target Group con healthcheck `/health` (`HTTP 200`). Su DNS público (`http://<ALB_DNS>`) **nunca cambia** aunque se terminen o reemplacen instancias EC2.
+   - **Auto Scaling Group (`pnk-carta-digital-asg`)** que gestiona **el 100% de las instancias EC2** (`2` instancias Ubuntu 24.04 LTS `t3.micro` activas por defecto en 2 Zonas de Disponibilidad: `min=2`, `desired=2`, `max=3`, política de escalado al 70% de CPU e **IMDSv2 obligatorio**). Si terminas cualquier instancia EC2, el ALB enruta el 100% del tráfico a la instancia sana con **cero downtime**, y Auto Scaling lanza automáticamente una copia de reemplazo.
+   - **Elastic IP fija flotante (`aws_eip.primary`):** se asocia automáticamente a una instancia activa del ASG tras `terraform apply`, y cada instancia nueva creada por Auto Scaling verifica mediante IMDSv2 + AWS CLI si la Elastic IP quedó libre o pertenecía a una instancia terminada para re-asociarla automáticamente.
+   - **Bootstrap automático (`user_data`):** crea 2 GB de Swap, instala AWS CLI, Docker Engine + Compose v2 + `postgresql-client`, clona la rama `produccion` en `/opt/carta-digital`, descarga el certificado SSL oficial de Amazon RDS (`certs/rds-global-bundle.pem`), genera `.env` (`0600`), espera a RDS con `pg_isready`, inicializa `database/init.sql` **solo si la tabla `public.usuarios` no existe** (protegido con `pg_advisory_lock` para no borrar datos al escalar o reemplazar nodos), ejecuta `docker compose -f docker-compose.rds.yml up -d --build` y verifica la auto-asociación de la Elastic IP.
 
 ### 3.4. Cómo leer la salida de Script 1
 
@@ -294,29 +297,29 @@ Al terminar, Script 1 guarda `infra/aws/outputs-despliegue.json` e imprime en pa
 
 | Campo impreso por Script 1 | Variable Terraform (`outputs.tf`) | Para qué se usa |
 | :--- | :--- | :--- |
-| **Elastic IP (EIP)** | `elastic_ip` | IP fija de la EC2 primaria. Se usa como `AWS_EC2_HOST` en GitHub Secrets y para SSH. |
-| **EC2_ORIGIN_URL (via ALB)** | `cloudflare_origin_url_alb` | Valor **recomendado** (`http://<ALB_DNS>`) para configurar `EC2_ORIGIN_URL` en Cloudflare (aprovecha el Load Balancer y el Auto Scaling). |
-| **EC2_ORIGIN_URL (via EIP)** | `cloudflare_origin_url_eip` | Alternativa directa (`http://<ELASTIC_IP>.sslip.io`) para `EC2_ORIGIN_URL` en Cloudflare apuntando a la EC2 primaria. |
+| **[PRINCIPAL] EC2_ORIGIN_URL (ALB)** | `cloudflare_origin_url_alb` | **Valor recomendado (`http://<ALB_DNS>`)** para configurar `EC2_ORIGIN_URL` en Cloudflare. Garantiza **cero downtime** y un **DNS permanente que nunca cambia** si terminas o reemplazas una EC2 en Auto Scaling. |
 | **Load Balancer URL (/carta)** | `load_balancer_dns` | URL directa de prueba HTTP en AWS (`http://<ALB_DNS>/carta`). |
+| **Elastic IP fija (EIP, ASG)** | `elastic_ip` | IP fija flotante asignada a una instancia activa del ASG (se usa para SSH y `AWS_EC2_HOST`). |
+| **[Alternativa] Origin via EIP** | `cloudflare_origin_url_eip` | Alternativa directa (`http://<ELASTIC_IP>.sslip.io`) si no deseas pasar por el ALB (nota: si la instancia que tenía la EIP es terminada, hay un breve corte mientras el nodo de reemplazo toma la EIP). |
 | **Amazon RDS Endpoint** | `rds_endpoint` | Dirección privada de PostgreSQL en RDS (solo accesible desde las EC2). |
 | **Llave SSH Privada (.pem)** | `ssh_private_key_path` | Ruta `infra/aws/pnk-ec2-deploy-key.pem` (para SSH y `AWS_EC2_SSH_KEY`). |
 | **Comando SSH** | `ssh_command` | Comando listo: `ssh -i infra/aws/pnk-ec2-deploy-key.pem ubuntu@<EIP>`. |
 
 ### 3.5. Verificar que Docker terminó de compilar e iniciar
 
-Aunque Terraform ya haya terminado, la instancia EC2 tarda **~3 a 5 minutos adicionales** en instalar Docker y compilar las imágenes `frontend-prod` y `backend-prod`.
+Aunque Terraform ya haya terminado, las 2 instancias EC2 del Auto Scaling Group pueden tardar **~3 a 5 minutos adicionales** en terminar de compilar las imágenes `frontend-prod` y `backend-prod`.
 
-Verifica el estado ejecutando (reemplaza `<ELASTIC_IP>` o `<ALB_DNS>` por los valores impresos por Script 1):
+Verifica el estado ejecutando (reemplaza `<ALB_DNS>` o `<ELASTIC_IP>` por los valores impresos por Script 1):
 
 - **En Linux / macOS / CloudShell:**
   ```bash
-  curl -i http://<ELASTIC_IP>/health
   curl -i http://<ALB_DNS>/health
+  curl -i http://<ELASTIC_IP>/health
   ```
 - **En Windows PowerShell:**
   ```powershell
-  curl.exe -i http://<ELASTIC_IP>/health
   curl.exe -i http://<ALB_DNS>/health
+  curl.exe -i http://<ELASTIC_IP>/health
   ```
 
 Cuando esté listo responderá **`HTTP/1.1 200 OK`** con JSON `"status":"healthy"`.
@@ -437,10 +440,14 @@ export default {
 6. Ve a la pestaña **Settings** -> **Variables and Secrets** -> clic en **+ Add**:
    - **Type:** `Text` *(Runtime variable)*
    - **Variable name:** `EC2_ORIGIN_URL`
-   - **Value:** pega el valor impreso por Script 1:
-     - **Opción recomendada (Load Balancer + Auto Scaling):** `http://<LOAD_BALANCER_DNS>` (output `cloudflare_origin_url_alb`)
-     - **Opción alternativa (EC2 Primaria directa):** `http://<ELASTIC_IP>.sslip.io` (output `cloudflare_origin_url_eip`)
+   - **Value:** pega el valor principal impreso por Script 1:
+     - **Opción recomendada (Load Balancer + Auto Scaling, cero downtime):** `http://<LOAD_BALANCER_DNS>` (output `cloudflare_origin_url_alb`, por ejemplo `http://pnk-carta-digital-alb-123456.us-east-1.elb.amazonaws.com`)
+     - **Opción alternativa (Elastic IP flotante directa):** `http://<ELASTIC_IP>.sslip.io` (output `cloudflare_origin_url_eip`)
 7. Haz clic en **Deploy** / **Save** para aplicar la variable en tiempo de ejecución.
+
+> [!IMPORTANT]
+> **¿Por qué debes usar `http://<LOAD_BALANCER_DNS>` (`cloudflare_origin_url_alb`) en `EC2_ORIGIN_URL`?**  
+> Porque con esta configuración **NUNCA tendrás que reconfigurar Cloudflare ni cambiar ningún DNS cuando se termine o reemplace una instancia EC2**: el Application Load Balancer conserva exactamente el mismo DNS (`pnk-carta-digital-alb-...us-east-1.elb.amazonaws.com`), redirige automáticamente el tráfico **sin tiempo de caída** a la segunda instancia sana del Auto Scaling Group, y AWS Auto Scaling levanta en paralelo una copia de reemplazo (la cual también re-asocia la Elastic IP si la instancia terminada la tenía asignada).
 
 ---
 
@@ -459,7 +466,7 @@ Si tienes un *fork* o acceso al repositorio en tu GitHub:
 3. Haz clic en **Save and Deploy**.
 4. Una vez desplegado, ve a **Settings -> Variables and Secrets -> + Add** (sección *Runtime*, **no** *Build variables*) y agrega:
    - **Variable name:** `EC2_ORIGIN_URL`
-   - **Value:** `http://<LOAD_BALANCER_DNS>` o `http://<ELASTIC_IP>.sslip.io`
+   - **Value:** `http://<LOAD_BALANCER_DNS>` *(recomendado para cero downtime y DNS fijo frente a Auto Scaling)* o `http://<ELASTIC_IP>.sslip.io`
 5. Guarda los cambios.
 
 #### B.2. Desde terminal con Wrangler CLI (alternativa rápida)
@@ -476,7 +483,7 @@ Luego agrega la variable `EC2_ORIGIN_URL` en el Dashboard (**Settings -> Variabl
 
 ```bash
 npx wrangler secret put EC2_ORIGIN_URL
-# Cuando te lo pida, pega: http://<LOAD_BALANCER_DNS>   (o http://<ELASTIC_IP>.sslip.io)
+# Cuando te lo pida, pega el DNS del ALB: http://<LOAD_BALANCER_DNS>
 ```
 
 ---
@@ -525,11 +532,23 @@ curl -I https://carta-digital.<tu-subdominio>.workers.dev/carta
 
 Deberás ver cabeceras como `Strict-Transport-Security`, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff` y `Referrer-Policy: strict-origin-when-cross-origin`.
 
+### 5.4. Cómo probar la Alta Disponibilidad y Auto-Recuperación (Terminar una instancia EC2)
+
+Gracias a que **el 100% de las instancias EC2** están gestionadas por **`pnk-carta-digital-asg`** (`2` instancias activas en `2` Zonas de Disponibilidad detrás de `pnk-carta-digital-alb`), puedes simular la caída total de un servidor sin afectar a los usuarios ni tocar Cloudflare:
+
+1. **Verifica el estado inicial:** abre `https://carta-digital.<tu-subdominio>.workers.dev/carta` en tu navegador y comprueba que la carta y el inicio de sesión funcionan normalmente.
+2. **Abre EC2 en la Consola de AWS (`us-east-1`):** ve a **EC2 -> Instances** y verás **2 instancias activas (`Running`)** llamadas `pnk-carta-digital-ec2`, desplegadas en dos Zonas de Disponibilidad distintas (por ejemplo `us-east-1a` y `us-east-1b`).
+3. **Termina una de las dos instancias:** selecciona cualquiera de ellas, haz clic en **Instance state -> Terminate (delete) instance** y confirma **Terminate**.
+4. **Comprueba el Cero Downtime en Cloudflare (sin cambiar DNS):** recarga inmediatamente `https://carta-digital.<tu-subdominio>.workers.dev/carta` (o ejecuta `curl -i https://carta-digital.<tu-subdominio>.workers.dev/health`). La aplicación **sigue respondiendo `200 OK` al instante**, porque el Application Load Balancer (`http://<ALB_DNS>`) mantiene su DNS fijo y desvía el 100% del tráfico hacia la instancia sobreviviente **sin tener que modificar `EC2_ORIGIN_URL` ni ningún registro DNS**.
+5. **Observa el reemplazo automático en Auto Scaling:** tras **30 a 90 segundos**, refresca **EC2 -> Instances** (o entra en **EC2 -> Auto Scaling Groups -> pnk-carta-digital-asg -> Activity**):
+   - Auto Scaling detecta que bajó de la capacidad deseada (`2`) y lanza automáticamente una **nueva instancia de reemplazo** (`Pending` -> `Running`).
+   - La nueva instancia ejecuta `user_data`, se conecta a **Amazon RDS PostgreSQL** (conservando intactos todos tus restaurantes, cartas, usuarios y comentarios), **re-asocia la Elastic IP automáticamente** si la instancia terminada era quien la tenía asignada, y tras ~3-5 minutos de compilación Docker pasa a `healthy` en el Target Group del ALB.
+
 ---
 
 ## 6. Opcional: Configurar Secretos de GitHub Actions para CI/CD Automático
 
-Si quieres que cada `git push` a la rama `produccion` actualice automáticamente tanto el código Docker en tu EC2 primaria como el Worker de Cloudflare usando el workflow `.github/workflows/deploy-produccion.yml`:
+Si quieres que cada `git push` a la rama `produccion` actualice automáticamente tanto el código Docker en tu instancia EC2 asociada a la Elastic IP como el Worker de Cloudflare usando el workflow `.github/workflows/deploy-produccion.yml`:
 
 1. En tu repositorio de GitHub ve a **Settings -> Secrets and variables -> Actions -> New repository secret**.
 2. Crea los **3 secretos de AWS EC2** usando los datos generados por Script 1:
@@ -548,7 +567,7 @@ Si quieres que cada `git push` a la rama `produccion` actualice automáticamente
 
 ## 7. Paso 4: Destruir toda la Infraestructura AWS con Script 2 (Cero Cobros)
 
-Cuando termines tus pruebas, demostración o evaluación, **ejecuta Script 2** para eliminar el 100% de los recursos en AWS y evitar cualquier cargo futuro (VPC, Subredes, IGW, Security Groups, EC2 primaria, Elastic IP, Application Load Balancer, Auto Scaling Group, Amazon RDS PostgreSQL y par de llaves SSH en AWS).
+Cuando termines tus pruebas, demostración o evaluación, **ejecuta Script 2** para eliminar el 100% de los recursos en AWS y evitar cualquier cargo futuro (VPC, Subredes, IGW, Security Groups, instancias EC2 del Auto Scaling Group, Elastic IP, Application Load Balancer, Amazon RDS PostgreSQL y par de llaves SSH en AWS).
 
 Desde la carpeta `infra/aws`:
 
@@ -578,11 +597,11 @@ Desde la carpeta `infra/aws`:
 
 | Síntoma | Causa probable | Cómo resolverlo |
 | :--- | :--- | :--- |
-| **`Error 502` o `503` al abrir Cloudflare justo después de Script 1** | La EC2 sigue descargando paquetes y compilando las imágenes Docker (~3 a 5 min). | Espera 2-3 minutos y prueba `curl -i http://<ELASTIC_IP>/health`. Si tarda más, entra por SSH y ejecuta `sudo tail -f /var/log/pnk-userdata.log`. |
+| **`Error 502` o `503` al abrir Cloudflare justo después de Script 1** | Las instancias EC2 siguen descargando paquetes y compilando las imágenes Docker (~3 a 5 min). | Espera 2-3 minutos y prueba `curl -i http://<ALB_DNS>/health`. Si tarda más, entra por SSH a la Elastic IP y ejecuta `sudo tail -f /var/log/pnk-userdata.log`. |
 | **Cloudflare muestra `Error 1003: Direct IP access not allowed`** | Se ingresó la IP sola en un servicio sin usar `.sslip.io`. | Usa el valor `cloudflare_origin_url_alb` (`http://<ALB_DNS>`) o `cloudflare_origin_url_eip` (`http://<ELASTIC_IP>.sslip.io`) en la variable `EC2_ORIGIN_URL`. |
-| **Cloudflare dice `"Falta configurar la IP publica de tu AWS EC2 en EC2_ORIGIN_URL"`** | No se guardó la variable en *Runtime* (`Variables and Secrets`) o se puso solo en *Build variables*. | Ve al Worker -> **Settings -> Variables and Secrets**, crea `EC2_ORIGIN_URL` de tipo `Text` y vuelve a desplegar (**Deploy**). |
+| **Cloudflare dice `"Falta configurar la IP publica de tu AWS EC2 en EC2_ORIGIN_URL"`** | No se guardó la variable en *Runtime* (`Variables and Secrets`) o se puso solo en *Build variables*. | Ve al Worker -> **Settings -> Variables and Secrets**, crea `EC2_ORIGIN_URL` de tipo `Text` con `http://<ALB_DNS>` y vuelve a desplegar (**Deploy**). |
 | **`aws sts get-caller-identity` falla (`InvalidClientTokenId` / `ExpiredToken`)** | En AWS Academy (`LabRole`), faltó `aws_session_token` (por usar solo `aws configure`) o el token temporal expiró (~4 horas). | Abre **AWS Details -> AWS CLI: Show -> Copy**, pega el bloque `[default]` completo en `~/.aws/credentials` (Windows: `notepad "$env:USERPROFILE\.aws\credentials"`), fija región `us-east-1` (`aws configure set region us-east-1`) y valida con `aws sts get-caller-identity`. |
-| **`AccessDenied` al intentar crear usuarios o roles en IAM** | AWS Academy Learner Lab (`LabRole` / `LabStudent`) prohíbe `iam:CreateUser` y `iam:CreateRole`. | No entres a IAM a crear usuarios ni ejecutes scripts que creen roles. Usa **AWS CloudShell** o **AWS Details** (`LabRole`), y mantén `iam_instance_profile` vacío (por defecto) o usa `"LabInstanceProfile"` solo si se requiere. |
+| **`AccessDenied` al intentar crear usuarios o roles en IAM** | AWS Academy Learner Lab (`LabRole` / `LabStudent`) prohíbe `iam:CreateUser` y `iam:CreateRole`. | No entres a IAM a crear usuarios ni ejecutes scripts que creen roles. Usa **AWS CloudShell** o **AWS Details** (`LabRole`); Script 1 detecta automáticamente `LabInstanceProfile` en AWS Academy o lo omite en cuentas personales. |
 | **Windows PowerShell bloquea `.\1-desplegar-aws.ps1`** | Política `ExecutionPolicy` restringida en Windows. | Ejecuta `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` en la misma ventana de PowerShell y vuelve a correr el script. |
 | **SSH falla por permisos demasiado abiertos en `.pem` (Linux/macOS)** | OpenSSH rechaza llaves privadas legibles por otros usuarios. | Ejecuta `chmod 600 infra/aws/pnk-ec2-deploy-key.pem` antes de conectarte por SSH. |
 | **No existe la carpeta `infra/aws` después de hacer `git clone`** | Hiciste `git clone` sin indicar la rama y Git descargó la rama antigua `main` (PHP). | Ejecuta `git fetch origin produccion:produccion && git checkout produccion`, o clona directamente con `git clone -b produccion --single-branch https://github.com/stxtiz/trabajo_desarrollo_seguro.git`. |

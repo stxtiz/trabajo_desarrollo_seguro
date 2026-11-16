@@ -50,7 +50,7 @@ if [ "$AUTO_CONFIRM" != "true" ]; then
   echo ""
   echo "ATENCION: Esta accion eliminara permanentemente TODOS los recursos creados:"
   echo "  - VPC, Subredes, IGW y Security Groups"
-  echo "  - Instancia EC2 Primaria, Elastic IP, ALB y Auto Scaling Group"
+  echo "  - Instancias EC2 del Auto Scaling Group, Elastic IP y Application Load Balancer"
   echo "  - Base de datos Amazon RDS PostgreSQL (y sus datos)"
   echo "  - Par de llaves SSH en AWS"
   echo ""

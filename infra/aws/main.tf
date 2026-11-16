@@ -29,7 +29,7 @@ resource "random_password" "db_password" {
   special = false
 }
 
-# Pepper criptográfico CSPRNG de alta entropía compartido entre EC2 Primaria y ASG
+# Pepper criptográfico CSPRNG de alta entropía compartido entre los nodos del Auto Scaling Group
 resource "random_password" "password_pepper" {
   length  = 48
   special = false

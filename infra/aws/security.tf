@@ -34,7 +34,7 @@ resource "aws_security_group" "alb_sg" {
   }
 }
 
-# --- Security Group para Instancias EC2 (Primaria con EIP + Auto Scaling Group) ---
+# --- Security Group para Instancias EC2 del Auto Scaling Group ---
 resource "aws_security_group" "ec2_sg" {
   name        = "${var.project_name}-ec2-sg"
   description = "ASVS v5.0 L3: Solo HTTP 80 (ALB / sslip.io) y SSH 22 (llave ED25519). Puertos 3000 y 5432 nunca expuestos"
