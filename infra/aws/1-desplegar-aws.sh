@@ -5,6 +5,8 @@
 # =============================================================================
 set -euo pipefail
 
+export PATH="$HOME/bin:$PATH"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
@@ -20,9 +22,26 @@ if ! command -v aws >/dev/null 2>&1; then
 fi
 
 if ! command -v terraform >/dev/null 2>&1; then
-  echo "[ERROR] Terraform ('terraform') no esta instalado."
-  echo "Instálalo desde: https://developer.hashicorp.com/terraform/install"
-  exit 1
+  if [ "$(uname -s)" = "Linux" ]; then
+    echo "[INFO] Terraform no encontrado. Instalando automaticamente de forma persistente en $HOME/bin/terraform..."
+    mkdir -p "$HOME/bin"
+    ARCH="$(uname -m)"
+    if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+      TF_ARCH="arm64"
+    else
+      TF_ARCH="amd64"
+    fi
+    TF_VER="1.11.2"
+    curl -fsSL "https://releases.hashicorp.com/terraform/${TF_VER}/terraform_${TF_VER}_linux_${TF_ARCH}.zip" -o /tmp/terraform.zip
+    unzip -o -q /tmp/terraform.zip -d "$HOME/bin"
+    chmod +x "$HOME/bin/terraform"
+    rm -f /tmp/terraform.zip
+    echo "  Terraform $(terraform version -json 2>/dev/null | grep -o '"terraform_version":"[^"]*"' || terraform -version | head -n 1) instalado en $HOME/bin/terraform (persistente en CloudShell)."
+  else
+    echo "[ERROR] Terraform ('terraform') no esta instalado."
+    echo "Instalalo desde: https://developer.hashicorp.com/terraform/install"
+    exit 1
+  fi
 fi
 
 # 2. Verificar sesión activa en AWS CLI
