@@ -28,8 +28,8 @@ output "cloudflare_origin_url_alb" {
 }
 
 output "rds_endpoint" {
-  description = "Endpoint privado de Amazon RDS PostgreSQL (solo accesible desde las EC2)"
-  value       = aws_db_instance.postgres.endpoint
+  description = "Endpoint privado de Amazon RDS PostgreSQL (o indicador de PostgreSQL local en Docker si create_rds = false)"
+  value       = local.rds_endpoint
 }
 
 output "ssh_private_key_path" {
@@ -43,8 +43,8 @@ output "ssh_command" {
 }
 
 output "vpc_id" {
-  description = "ID de la VPC creada"
-  value       = aws_vpc.main.id
+  description = "ID de la VPC utilizada"
+  value       = local.vpc_id
 }
 
 output "autoscaling_group_name" {
