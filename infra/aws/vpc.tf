@@ -25,7 +25,7 @@ resource "aws_internet_gateway" "main" {
   }
 }
 
-# --- 2 Subredes Públicas en 2 Zonas de Disponibilidad (ALB, EC2 Primaria y ASG) ---
+# --- 2 Subredes Públicas en 2 Zonas de Disponibilidad (ALB y Auto Scaling Group) ---
 resource "aws_subnet" "public" {
   count = 2
 

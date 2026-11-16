@@ -60,11 +60,26 @@ echo ""
 echo "[3/4] Validando configuracion de Terraform..."
 terraform validate
 
-# 4. Aplicar infraestructura
+# 4. Detectar Instance Profile (AWS Academy LabInstanceProfile vs cuenta personal) y aplicar
 echo ""
-echo "[4/4] Creando VPC, Security Groups, RDS PostgreSQL 16, EC2, EIP, ALB y ASG..."
+echo "[4/4] Creando VPC, Security Groups, RDS PostgreSQL 16, EIP, ALB y Auto Scaling Group (2 EC2 en 2 AZs)..."
 echo "      (Esto suele tardar entre 6 y 10 minutos principalmente por Amazon RDS)"
-terraform apply -auto-approve
+
+IAM_PROFILE_VAR=""
+if echo "$CALLER_ARN" | grep -qE "voclabs|LabRole"; then
+  echo "  Entorno AWS Academy detectado: usando iam_instance_profile=LabInstanceProfile."
+elif aws iam get-instance-profile --instance-profile-name LabInstanceProfile >/dev/null 2>&1; then
+  echo "  Instance Profile 'LabInstanceProfile' encontrado."
+else
+  echo "  Cuenta personal sin 'LabInstanceProfile': usando iam_instance_profile=\"\"."
+  IAM_PROFILE_VAR="-var=iam_instance_profile="
+fi
+
+if [ -n "$IAM_PROFILE_VAR" ]; then
+  terraform apply -auto-approve "$IAM_PROFILE_VAR"
+else
+  terraform apply -auto-approve
+fi
 
 # Guardar outputs en JSON
 terraform output -json > outputs-despliegue.json
@@ -74,12 +89,30 @@ if [ -f "pnk-ec2-deploy-key.pem" ]; then
 fi
 
 EIP="$(terraform output -raw elastic_ip)"
+EIP_ALLOC_ID="$(terraform output -raw elastic_ip_allocation_id)"
+ASG_NAME="$(terraform output -raw autoscaling_group_name)"
 CF_ORIGIN_EIP="$(terraform output -raw cloudflare_origin_url_eip)"
 ALB_DNS="$(terraform output -raw load_balancer_dns)"
 CF_ORIGIN_ALB="$(terraform output -raw cloudflare_origin_url_alb)"
 RDS_ENDPOINT="$(terraform output -raw rds_endpoint)"
 SSH_KEY_PATH="infra/aws/pnk-ec2-deploy-key.pem"
 SSH_CMD="ssh -i ${SSH_KEY_PATH} ubuntu@${EIP}"
+
+# Asociar inmediatamente la Elastic IP a la primera instancia running del Auto Scaling Group
+ASG_INSTANCE_ID="$(aws ec2 describe-instances \
+  --filters "Name=tag:aws:autoscaling:groupName,Values=${ASG_NAME}" "Name=instance-state-name,Values=running" \
+  --query "Reservations[0].Instances[0].InstanceId" \
+  --output text 2>/dev/null || echo "")"
+
+if [ -n "$ASG_INSTANCE_ID" ] && [ "$ASG_INSTANCE_ID" != "None" ]; then
+  echo "  Asociando Elastic IP ($EIP / $EIP_ALLOC_ID) a instancia activa del ASG ($ASG_INSTANCE_ID)..."
+  aws ec2 associate-address \
+    --instance-id "$ASG_INSTANCE_ID" \
+    --allocation-id "$EIP_ALLOC_ID" \
+    --allow-reassociation >/dev/null
+else
+  echo "  Aviso: No se encontró aún una instancia 'running' en $ASG_NAME; user_data asociará la EIP al iniciar."
+fi
 
 echo ""
 echo "============================================================================="
@@ -88,28 +121,32 @@ echo "==========================================================================
 echo ""
 echo "  RESUMEN DE RECURSOS Y URLs:"
 echo "  ---------------------------------------------------------------------------"
-echo "  Elastic IP (EIP)             : $EIP"
-echo "  EC2_ORIGIN_URL (via EIP)     : $CF_ORIGIN_EIP"
-echo "  EC2_ORIGIN_URL (via ALB)     : $CF_ORIGIN_ALB"
-echo "  Load Balancer URL (/carta)   : http://${ALB_DNS}/carta"
-echo "  Amazon RDS Endpoint          : $RDS_ENDPOINT"
-echo "  Llave SSH Privada (.pem)     : $SSH_KEY_PATH"
-echo "  Comando SSH                  : $SSH_CMD"
-echo "  Archivo de Outputs JSON      : infra/aws/outputs-despliegue.json"
+echo "  [PRINCIPAL] EC2_ORIGIN_URL (ALB): $CF_ORIGIN_ALB"
+echo "    -> DNS permanente del Load Balancer (NUNCA cambia aunque termines/reemplaces EC2)"
+echo "    -> Distribuye trafico con CERO downtime entre 2 instancias EC2 (2 AZs) del ASG ($ASG_NAME)"
+echo "  Load Balancer URL (/carta)      : http://${ALB_DNS}/carta"
+echo "  Elastic IP fija (EIP, ASG)      : $EIP (instancia actual: ${ASG_INSTANCE_ID:-pendiente})"
+echo "  [Alternativa] Origin via EIP    : $CF_ORIGIN_EIP"
+echo "  Amazon RDS Endpoint             : $RDS_ENDPOINT"
+echo "  Llave SSH Privada (.pem)        : $SSH_KEY_PATH"
+echo "  Comando SSH                     : $SSH_CMD"
+echo "  Archivo de Outputs JSON         : infra/aws/outputs-despliegue.json"
 echo ""
-echo "  VARIABLES PARA CLOUDFLARE WORKER (Workers & Pages -> Settings -> Variables):"
+echo "  VARIABLE PRINCIPAL PARA CLOUDFLARE WORKER (Settings -> Variables and Secrets):"
 echo "  ---------------------------------------------------------------------------"
-echo "  EC2_ORIGIN_URL               = $CF_ORIGIN_ALB"
-echo "  (Alternativa directa EIP)    = $CF_ORIGIN_EIP"
+echo "  EC2_ORIGIN_URL                  = $CF_ORIGIN_ALB"
+echo "  (IMPORTANTE: Con esta URL del ALB, JAMAS tendras que cambiar DNS ni reconfigurar"
+echo "   Cloudflare si terminas o reemplazas una instancia EC2 en Auto Scaling.)"
+echo "  (Alternativa secundaria EIP)    = $CF_ORIGIN_EIP"
 echo ""
 echo "  SECRETOS PARA GITHUB ACTIONS (Settings -> Secrets and variables -> Actions):"
 echo "  ---------------------------------------------------------------------------"
-echo "  AWS_EC2_HOST                 = $EIP"
-echo "  AWS_EC2_USER                 = ubuntu"
-echo "  AWS_EC2_SSH_KEY              = <contenido completo de infra/aws/pnk-ec2-deploy-key.pem>"
+echo "  AWS_EC2_HOST                    = $EIP"
+echo "  AWS_EC2_USER                    = ubuntu"
+echo "  AWS_EC2_SSH_KEY                 = <contenido completo de infra/aws/pnk-ec2-deploy-key.pem>"
 echo ""
-echo "  NOTA: La EC2 tarda ~3-5 min adicionales en compilar Docker e iniciar."
+echo "  NOTA: Las EC2 tardan ~3-5 min adicionales en compilar Docker e iniciar."
 echo "  Verifica el estado con:"
-echo "    curl -i http://${EIP}/health"
 echo "    curl -i http://${ALB_DNS}/health"
+echo "    curl -i http://${EIP}/health"
 echo "============================================================================="
