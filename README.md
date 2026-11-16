@@ -27,6 +27,11 @@ Si llegas desde cero y quieres desplegar toda la infraestructura en AWS (**VPC +
 | **`qa`** | **2. QA con IA** | `frontend/`, `backend/`, `database/`, `infra/aws/`, `qa-ai/` (Agente IA GitHub Copilot/Models), `.github/workflows/qa-ai.yml`, `docker-compose.yml` (QA). | Se ejecuta automáticamente en GitHub Actions al hacer push/PR a `qa` o localmente con `docker compose up --build --abort-on-container-exit --exit-code-from qa-ai-agent`. |
 | **`produccion`** | **3. Producción** | `frontend/`, `backend/`, `database/`, `infra/aws/`, `cloudflare-worker/`, `wrangler.toml`, `.github/workflows/deploy-produccion.yml`, `docker-compose.yml` & `docker-compose.rds.yml` (Prod endurecido). | Despliegue con [`1-desplegar-aws.sh`](./infra/aws/1-desplegar-aws.sh) / [`.ps1`](./infra/aws/1-desplegar-aws.ps1) + Cloudflare `*.workers.dev`, y CI/CD por SSH al hacer push a `produccion`. |
 
+> [!IMPORTANT]
+> La rama `main` en GitHub conserva la versión heredada en PHP y **no** contiene `infra/aws/` ni el stack moderno. Para clonar el proyecto correctamente, indica siempre la rama deseada:
+> - **Producción / Despliegue AWS:** `git clone -b produccion --single-branch https://github.com/stxtiz/trabajo_desarrollo_seguro.git`
+> - **Desarrollo local:** `git clone -b desarrollo --single-branch https://github.com/stxtiz/trabajo_desarrollo_seguro.git`
+
 ---
 
 ## Guías Locales de Referencia (Ignoradas en Git por `.gitignore`)
