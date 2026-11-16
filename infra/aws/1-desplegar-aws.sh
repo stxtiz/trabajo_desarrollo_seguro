@@ -46,7 +46,11 @@ if ! command -v terraform >/dev/null 2>&1; then
     unzip -o -q /tmp/terraform.zip -d "$HOME/bin"
     chmod +x "$HOME/bin/terraform"
     rm -f /tmp/terraform.zip
-    echo "  Terraform $(terraform version -json 2>/dev/null | grep -o '"terraform_version":"[^"]*"' || terraform -version | head -n 1) instalado en $HOME/bin/terraform (persistente en CloudShell)."
+    TF_VER_OUT="$((terraform version -json 2>/dev/null || true) | (grep -o '"terraform_version":"[^"]*"' || true))"
+    if [ -z "$TF_VER_OUT" ]; then
+      TF_VER_OUT="$((terraform -version 2>/dev/null || true) | sed -n '1p')"
+    fi
+    echo "  Terraform ${TF_VER_OUT:-$TF_VER} instalado en $HOME/bin/terraform (persistente en CloudShell)."
   else
     echo "[ERROR] Terraform ('terraform') no esta instalado."
     echo "Instalalo desde: https://developer.hashicorp.com/terraform/install"
@@ -133,7 +137,8 @@ if [ "$HAS_LOCAL_STATE" != "true" ]; then
       echo "  Limpiando automáticamente recursos huérfanos con ./2-destruir-aws.sh -y..."
       bash "$SCRIPT_DIR/2-destruir-aws.sh" -y
     else
-      read -r -p "¿Deseas ejecutar './2-destruir-aws.sh -y' ahora para limpiar los recursos previos y continuar? [s/N]: " CLEAN_CONFIRM
+      CLEAN_CONFIRM=""
+      read -r -p "¿Deseas ejecutar './2-destruir-aws.sh -y' ahora para limpiar los recursos previos y continuar? [s/N]: " CLEAN_CONFIRM || CLEAN_CONFIRM=""
       case "$CLEAN_CONFIRM" in
         s|S|si|SI|y|Y|yes|YES)
           bash "$SCRIPT_DIR/2-destruir-aws.sh" -y
@@ -162,7 +167,7 @@ echo "[4/4] Creando VPC, Security Groups, RDS PostgreSQL 16, EIP, ALB y Auto Sca
 echo "      (Esto suele tardar entre 6 y 10 minutos principalmente por Amazon RDS)"
 
 IAM_PROFILE_VAR=""
-if echo "$CALLER_ARN" | grep -qE "voclabs|LabRole"; then
+if [[ "$CALLER_ARN" =~ (voclabs|LabRole) ]]; then
   echo "  Entorno AWS Academy detectado: usando iam_instance_profile=LabInstanceProfile."
 elif aws iam get-instance-profile --instance-profile-name LabInstanceProfile >/dev/null 2>&1; then
   echo "  Instance Profile 'LabInstanceProfile' encontrado."
@@ -202,10 +207,12 @@ ASG_INSTANCE_ID="$(aws ec2 describe-instances \
 
 if [ -n "$ASG_INSTANCE_ID" ] && [ "$ASG_INSTANCE_ID" != "None" ]; then
   echo "  Asociando Elastic IP ($EIP / $EIP_ALLOC_ID) a instancia activa del ASG ($ASG_INSTANCE_ID)..."
-  aws ec2 associate-address \
+  if ! aws ec2 associate-address \
     --instance-id "$ASG_INSTANCE_ID" \
     --allocation-id "$EIP_ALLOC_ID" \
-    --allow-reassociation >/dev/null
+    --allow-reassociation >/dev/null 2>&1; then
+    echo "  Aviso: No se pudo asociar la Elastic IP aún; user_data la asociará al iniciar."
+  fi
 else
   echo "  Aviso: No se encontró aún una instancia 'running' en $ASG_NAME; user_data asociará la EIP al iniciar."
 fi
