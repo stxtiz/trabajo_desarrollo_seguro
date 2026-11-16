@@ -122,3 +122,22 @@ variable "iam_instance_profile" {
   type        = string
   default     = "LabInstanceProfile"
 }
+
+variable "create_rds" {
+  description = "Si es true (por defecto), crea o reutiliza Amazon RDS PostgreSQL 16. Si es false, despliega usando PostgreSQL en contenedor Docker local dentro de EC2."
+  type        = bool
+  default     = true
+}
+
+variable "reuse_existing_rds" {
+  description = "Si es true, reutiliza una instancia Amazon RDS existente (y su VPC, Subredes y Security Groups previos) en lugar de crear una nueva."
+  type        = bool
+  default     = false
+}
+
+variable "db_password_override" {
+  description = "Contraseña opcional sincronizada para conectar a una instancia Amazon RDS existente cuando reuse_existing_rds = true."
+  type        = string
+  default     = ""
+  sensitive   = true
+}

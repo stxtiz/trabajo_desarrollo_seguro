@@ -259,12 +259,18 @@ Elige el script según tu terminal:
   chmod +x 1-desplegar-aws.sh 2-destruir-aws.sh
   ./1-desplegar-aws.sh
   ```
+  *(Opciones opcionales: `--keep-rds` para conservar y reutilizar un RDS existente, `--delete-rds` para eliminar un RDS previo y recrear todo desde cero, `--without-rds` para desplegar usando PostgreSQL local en Docker sin RDS, o `-y` para modo no interactivo).*
 
 - **Windows (PowerShell):**
   ```powershell
   .\1-desplegar-aws.ps1
   ```
-  *(Si PowerShell bloquea la ejecución por política de scripts locales, ejecuta primero en esa misma ventana: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` y vuelve a ejecutar `.\1-desplegar-aws.ps1`).*
+  *(Opciones opcionales: `-KeepRds`, `-DeleteRds`, `-WithoutRds`, `-Force`. Si PowerShell bloquea la ejecución por política de scripts locales, ejecuta primero en esa misma ventana: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` y vuelve a ejecutar `.\1-desplegar-aws.ps1`).*
+
+> [!TIP]
+> **Opción inteligente de Amazon RDS al desplegar:**
+> - **Si ya existe un RDS (`pnk-carta-digital-postgres`) en AWS** (por ejemplo, tras usar Script 2 conservando RDS o tras reiniciar CloudShell), Script 1 te preguntará si deseas **conservar y reutilizar el RDS existente** (`[N]`, recomendado: mantiene todos tus datos, sincroniza credenciales y termina en ~2-3 min) o **eliminarlo y recrear todo desde cero** (`[s]`, ~10 min).
+> - **Si NO existe un RDS en AWS**, Script 1 te preguntará si deseas **crear Amazon RDS PostgreSQL 16** (`[S]`, recomendado) o **desplegar sin RDS usando PostgreSQL en contenedor Docker local** (`[n]`, ~2 min para pruebas rápidas).
 
 ### 3.3. ¿Qué crea Script 1 automáticamente?
 
@@ -563,9 +569,9 @@ Si quieres que cada `git push` a la rama `produccion` actualice automáticamente
 
 ---
 
-## 7. Paso 4: Destruir toda la Infraestructura AWS con Script 2 (Cero Cobros)
+## 7. Paso 4: Destruir la Infraestructura AWS con Script 2 (Con o sin RDS)
 
-Cuando termines tus pruebas, demostración o evaluación, **ejecuta Script 2** para eliminar el 100% de los recursos en AWS y evitar cualquier cargo futuro (VPC, Subredes, IGW, Security Groups, instancias EC2 del Auto Scaling Group, Elastic IP, Application Load Balancer, Amazon RDS PostgreSQL y par de llaves SSH en AWS).
+Cuando termines tus pruebas, demostración o evaluación, **ejecuta Script 2** para destruir los recursos en AWS. Al iniciarlo de forma interactiva, Script 2 te preguntará si deseas **eliminar también Amazon RDS (`pnk-carta-digital-postgres`)** o **conservar el RDS y su VPC base** para reutilizarlos rápido (y sin perder tus datos) en el próximo despliegue:
 
 Desde la carpeta `infra/aws`:
 
@@ -573,28 +579,28 @@ Desde la carpeta `infra/aws`:
   ```bash
   ./2-destruir-aws.sh
   ```
-  *(O `./2-destruir-aws.sh -y` para omitir la confirmación interactiva).*
+  *(Opciones opcionales: `./2-destruir-aws.sh --keep-rds` para destruir solo EC2/ASG/ALB/EIP/KeyPair conservando RDS y VPC; `./2-destruir-aws.sh --delete-rds` para destruir el 100% incluyendo RDS y VPC; agrega `-y` para omitir confirmaciones).*
 
 - **Windows (PowerShell):**
   ```powershell
   .\2-destruir-aws.ps1
   ```
-  *(O `.\2-destruir-aws.ps1 -Force` para omitir la confirmación interactiva).*
+  *(Opciones opcionales: `.\2-destruir-aws.ps1 -KeepRds`, `.\2-destruir-aws.ps1 -DeleteRds`, o `-Force` para omitir confirmaciones).*
 
 ### Qué hace Script 2 (100% Stateless-Proof / a prueba de pérdida de sesión)
-1. **Paso 1 — Terraform Destroy (si existe estado local):** Si `terraform.tfstate` existe y no está vacío, ejecuta `terraform destroy -auto-approve`. Si cerraste AWS CloudShell, expiró tu sesión o clonaste el repositorio en una carpeta nueva sin `terraform.tfstate`, el script **no se detiene**: omite Terraform y pasa automáticamente al Paso 2.
-2. **Paso 2 — Barrido directo por AWS CLI (Stateless Sweep):** Consulta directamente la API de AWS (`us-east-1`) por el prefijo `pnk-carta-digital` y elimina en el orden exacto de dependencias el 100% de los recursos existentes (tengan o no `terraform.tfstate` local):
+1. **Paso 1 — Terraform Destroy (si se eliminará RDS y existe estado local):** Si elegiste eliminar RDS y `terraform.tfstate` existe y no está vacío, ejecuta `terraform destroy -auto-approve`. Si elegiste conservar RDS, omite `terraform destroy` para proteger Amazon RDS y su red base. Si cerraste AWS CloudShell o perdiste `terraform.tfstate`, pasa automáticamente al Paso 2.
+2. **Paso 2 — Barrido directo por AWS CLI (Stateless Sweep):** Consulta directamente la API de AWS (`us-east-1`) por el prefijo `pnk-carta-digital` y elimina en el orden exacto de dependencias:
    - Auto Scaling Group (`pnk-carta-digital-asg --force-delete`) y Launch Templates (`pnk-carta-digital-lt-*`).
    - Instancias EC2 (`pnk-carta-digital*` o dentro de la VPC) esperando estado `terminated`.
    - Application Load Balancer (`pnk-carta-digital-alb`) y Target Group (`pnk-carta-digital-tg`).
    - Elastic IPs (`pnk-carta-digital*`, desasociando y liberando cada asignación).
-   - Amazon RDS PostgreSQL (`pnk-carta-digital-postgres`, desactivando `deletion-protection` y borrando sin snapshot final) y DB Subnet Group (`pnk-carta-digital-rds-subnet-group`).
    - Par de llaves SSH (`pnk-carta-digital-deploy-key`).
-   - ENIs residuales, Security Groups no-default (revocando reglas cruzadas primero), Subredes, Route Tables, Internet Gateways y la VPC (`pnk-carta-digital-vpc`).
-3. **Paso 3 — Limpieza local:** Elimina `terraform.tfstate`, `terraform.tfstate.backup`, `pnk-ec2-deploy-key.pem` y `outputs-despliegue.json`, dejando todo listo para futuros despliegues limpios (`$0 en cargos continuos de AWS`).
+   - **Si elegiste eliminar RDS (`--delete-rds` / `-DeleteRds`):** elimina Amazon RDS PostgreSQL (`pnk-carta-digital-postgres`, desactivando `deletion-protection` y borrando sin snapshot final), DB Subnet Group (`pnk-carta-digital-rds-subnet-group`), ENIs residuales, Security Groups no-default, Subredes, Route Tables, Internet Gateways y la VPC (`pnk-carta-digital-vpc`).
+   - **Si elegiste conservar RDS (`--keep-rds` / `-KeepRds`):** conserva intactos Amazon RDS, DB Subnet Group, VPC, Subredes y Security Groups para que tu próximo `./1-desplegar-aws.sh` reutilice la base de datos en ~2-3 minutos.
+3. **Paso 3 — Limpieza local:** Elimina `terraform.tfstate`, `terraform.tfstate.backup`, `pnk-ec2-deploy-key.pem` y `outputs-despliegue.json`.
 
 > [!NOTE]
-> Si además ejecutas **Script 1** (`./1-desplegar-aws.sh` o `.\1-desplegar-aws.ps1`) sin `terraform.tfstate` local mientras existen recursos huérfanos `pnk-carta-digital-*` en AWS, Script 1 los detectará automáticamente y te ofrecerá invocar Script 2 (`-y` / `-Force`) antes de desplegar para evitar errores de recursos duplicados.
+> Si ejecutas **Script 1** (`./1-desplegar-aws.sh` o `.\1-desplegar-aws.ps1`) mientras existe un RDS previo (o recursos huérfanos sin `terraform.tfstate`), Script 1 detectará el estado real en AWS y te preguntará si deseas **conservar y reutilizar el RDS existente** (`--keep-rds`) o **eliminarlo para recrear desde cero** (`--delete-rds`).
 
 > [!TIP]
 > Como buena práctica adicional, puedes abrir brevemente en la Consola de AWS (región `us-east-1`): **EC2 -> Instances**, **EC2 -> Load Balancers**, **EC2 -> Elastic IPs** y **RDS -> Databases** para confirmar visualmente que ya no queda ningún recurso activo. En Cloudflare puedes dejar el Worker o eliminarlo desde **Settings -> Delete** (el plan gratuito de Cloudflare Workers no tiene cobro mensual).
